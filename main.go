@@ -1,3 +1,6 @@
+// Go equivalent of the provided C library.
+// This library is structured with idiomatic Go practices and comprehensive documentation.
+
 package main
 
 import (
@@ -5,257 +8,427 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"log"
+	"math"
 	"sync"
 	"time"
 
-	"go.bug.st/serial"
-	"go.bug.st/serial/enumerator"
+	"github.com/tarm/serial"
 )
 
-type TMType uint16
+// Definitions for the CRC16 computation
+func CRC16(data []byte) uint16 {
+	remainder := uint16(0)
 
+	for _, b := range data {
+		remainder = CRC16Recursive(b, remainder)
+	}
+	log.Printf("CRC16 calculated for data: %X -> %X", data, remainder)
+	return remainder
+}
+
+func CRC16Recursive(byteVal byte, remainder uint16) uint16 {
+	n := 16
+	remainder ^= uint16(byteVal) << (n - 8)
+
+	for j := 1; j < 8; j++ {
+		if remainder&0x8000 != 0 {
+			remainder = (remainder << 1) ^ 0x1021
+		} else {
+			remainder <<= 1
+		}
+		remainder &= 0xFFFF
+	}
+	return remainder
+}
+
+// Frame handling
 const (
-	TMString  TMType = 1
-	TMUint8   TMType = 2
-	TMUint16  TMType = 3
-	TMUint32  TMType = 4
-	TMInt8    TMType = 5
-	TMInt16   TMType = 6
-	TMInt32   TMType = 7
-	TMFloat32 TMType = 8
-
 	SOF = 0xF7
 	EOF = 0x7F
 	ESC = 0x7D
-
-	HashSize           = 256
-	IncomingBufferSize = 1024 * 128
-	OutgoingBufferSize = 1024 * 128
-	VendorID           = "0403"
-	ProductID          = "6015"
 )
 
-type TMMessage struct {
-	Topic string
-	Type  TMType
-	Data  []byte
+type FramingState int
+
+const (
+	Idle FramingState = iota
+	Escaping
+	Active
+)
+
+type Frame struct {
+	IncomingBuffer []byte
+	OutgoingBuffer []byte
+	IncomingState  FramingState
+	OnFrame        func(data []byte)
+	OnError        func(err error)
 }
 
-type TMState struct {
-	callbacks map[string]func(*TMMessage)
-	variables map[string]interface{}
-	sync.RWMutex
-}
-
-var (
-	telemetryState = TMState{
-		callbacks: make(map[string]func(*TMMessage)),
-		variables: make(map[string]interface{}),
+func NewFrame() *Frame {
+	return &Frame{
+		IncomingBuffer: make([]byte, 0),
+		OutgoingBuffer: make([]byte, 0),
+		IncomingState:  Idle,
+		OnFrame:        nil,
+		OnError:        nil,
 	}
-	incomingBuffer = make([]byte, IncomingBufferSize)
-	outgoingBuffer = make([]byte, OutgoingBufferSize)
-	serialPort     io.ReadWriteCloser
-	serialLock     sync.Mutex
-)
-
-func InitTelemetry() {
-	fmt.Println("Telemetry initialized")
 }
 
-// Publish a message to the specified topic
-func Publish(topic string, data interface{}) error {
-	buf := new(bytes.Buffer)
+func (f *Frame) BeginFrame() {
+	f.OutgoingBuffer = []byte{SOF}
+	log.Println("Frame started.")
+}
 
-	switch v := data.(type) {
-	case string:
-		buf.WriteString(v)
-	case uint8, uint16, uint32, int8, int16, int32, float32:
-		if err := binary.Write(buf, binary.LittleEndian, v); err != nil {
-			return err
+func (f *Frame) AppendByte(b byte) {
+	if b == SOF || b == EOF || b == ESC {
+		f.OutgoingBuffer = append(f.OutgoingBuffer, ESC)
+	}
+	f.OutgoingBuffer = append(f.OutgoingBuffer, b)
+	log.Printf("Appended byte: %X", b)
+}
+
+func (f *Frame) AppendUint16(value uint16) {
+	buf := make([]byte, 2)
+	binary.LittleEndian.PutUint16(buf, value)
+	for _, b := range buf {
+		f.AppendByte(b)
+	}
+	log.Printf("Appended uint16: %X", value)
+}
+
+func (f *Frame) EndFrame() {
+	f.OutgoingBuffer = append(f.OutgoingBuffer, EOF)
+	log.Println("Frame ended.")
+}
+
+func (f *Frame) FeedByte(b byte) {
+	switch f.IncomingState {
+	case Idle:
+		if b == SOF {
+			f.IncomingBuffer = []byte{}
+			f.IncomingState = Active
 		}
-	default:
-		return errors.New("unsupported type")
-	}
-
-	frame := createFrame(topic, TMType(buf.Len()), buf.Bytes())
-	return sendFrame(frame)
-}
-
-// Subscribe to a topic with a callback function
-func subscribe(topic string, callback func(*TMMessage)) {
-	telemetryState.Lock()
-	telemetryState.callbacks[topic] = callback
-	telemetryState.Unlock()
-	fmt.Printf("[INFO] Subscribed to topic: %s\n", topic)
-}
-
-func createFrame(topic string, tType TMType, payload []byte) []byte {
-	buf := new(bytes.Buffer)
-
-	// SOF
-	buf.WriteByte(SOF)
-
-	// Header
-	binary.Write(buf, binary.LittleEndian, tType)
-
-	// Topic
-	topicBytes := append([]byte(topic), 0) // Null-terminated
-	buf.Write(topicBytes)
-
-	// Payload
-	buf.Write(payload)
-
-	// CRC
-	crc := calculateCRC(buf.Bytes()[1:]) // Exclude SOF
-	binary.Write(buf, binary.LittleEndian, crc)
-
-	// EOF
-	buf.WriteByte(EOF)
-
-	return buf.Bytes()
-}
-
-func calculateCRC(data []byte) uint16 {
-	var rem uint16
-	for _, b := range data {
-		remainder := rem ^ (uint16(b) << 8)
-		for i := 0; i < 8; i++ {
-			if remainder&0x8000 != 0 {
-				remainder = (remainder << 1) ^ 0x1021
-			} else {
-				remainder <<= 1
+	case Escaping:
+		f.IncomingBuffer = append(f.IncomingBuffer, b)
+		f.IncomingState = Active
+	case Active:
+		if b == EOF {
+			if f.OnFrame != nil {
+				f.OnFrame(f.IncomingBuffer)
 			}
+			f.IncomingState = Idle
+		} else if b == ESC {
+			f.IncomingState = Escaping
+		} else {
+			f.IncomingBuffer = append(f.IncomingBuffer, b)
 		}
-		rem = remainder & 0xFFFF
 	}
-	return rem
 }
 
-func sendFrame(frame []byte) error {
-	serialLock.Lock()
-	defer serialLock.Unlock()
+// Telemetry Core
+const (
+	IncomingBufferSize = 128
+	OutgoingBufferSize = 128
+	TopicBufferSize    = 64
+)
 
-	if serialPort == nil {
-		var err error
-		serialPort, _, err = GetUSBPort()
+type TMType int
+
+const (
+	TMFloat32 TMType = iota
+	TMUint8
+	TMUint16
+	TMUint32
+	TMInt8
+	TMInt16
+	TMInt32
+	TMString
+)
+
+type TMMsg struct {
+	Type    TMType
+	Topic   string
+	Payload []byte
+}
+
+type TMTransport struct {
+	Read  func([]byte) (int, error)
+	Write func([]byte) (int, error)
+}
+
+type Telemetry struct {
+	Frame          *Frame
+	HashTable      map[string]interface{}
+	TopicCallbacks map[string]func(TMMsg)
+	Transport      *TMTransport
+	Mutex          sync.Mutex
+	ReceivedTopics map[string]bool
+}
+
+func NewTelemetry(transport *TMTransport) *Telemetry {
+	t := &Telemetry{
+		Frame:          NewFrame(),
+		HashTable:      make(map[string]interface{}),
+		TopicCallbacks: make(map[string]func(TMMsg)),
+		Transport:      transport,
+		ReceivedTopics: make(map[string]bool),
+	}
+	t.Frame.OnFrame = func(data []byte) {
+		msg, err := t.parseFrame(data)
 		if err != nil {
-			return fmt.Errorf("failed to connect to serial port: %w", err)
+			log.Printf("Error parsing frame: %v", err)
+			return
 		}
+		t.TryUpdateHashTable(msg)
+	}
+	log.Println("Telemetry system initialized.")
+	return t
+}
+
+func (t *Telemetry) parseFrame(data []byte) (TMMsg, error) {
+
+	if len(data) < 4 { // Minimum length to include header and topic
+		return TMMsg{}, errors.New("frame too short after unescaping")
 	}
 
-	_, err := serialPort.Write(frame)
+	msgType := binary.LittleEndian.Uint16(data[:2])
+	topicEnd := bytes.IndexByte(data[2:], 0) + 2
+	if topicEnd < 2 {
+		return TMMsg{}, errors.New("invalid topic")
+	}
+	topic := string(data[2:topicEnd])
+	payload := data[topicEnd+1 : len(data)-2]
+	crcLocal := CRC16(data[:len(data)-2])
+	crcFrame := binary.LittleEndian.Uint16(data[len(data)-2:])
+
+	if crcLocal != crcFrame {
+		return TMMsg{}, fmt.Errorf("CRC mismatch: local=%X frame=%X", crcLocal, crcFrame)
+	}
+
+	return TMMsg{
+		Type:    TMType(msgType),
+		Topic:   topic,
+		Payload: payload,
+	}, nil
+}
+
+func (t *Telemetry) Attach(topic string, variable interface{}) {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
+	t.HashTable[topic] = variable
+	log.Printf("Attached topic: %s", topic)
+}
+
+func (t *Telemetry) Subscribe(topic string, callback func(TMMsg)) {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
+	t.TopicCallbacks[topic] = callback
+	log.Printf("Subscribed to topic: %s", topic)
+}
+
+func (t *Telemetry) Publish(topic string, msgType TMType, payload []byte) error {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
+
+	t.Frame.BeginFrame()
+	head := make([]byte, 2)
+	binary.LittleEndian.PutUint16(head, uint16(msgType))
+	t.Frame.AppendByte(head[0])
+	t.Frame.AppendByte(head[1])
+
+	topicBytes := []byte(topic)
+	t.Frame.OutgoingBuffer = append(t.Frame.OutgoingBuffer, topicBytes...)
+	t.Frame.AppendByte(0)
+
+	t.Frame.OutgoingBuffer = append(t.Frame.OutgoingBuffer, payload...)
+
+	crc := CRC16(t.Frame.OutgoingBuffer[1:])
+	t.Frame.AppendUint16(crc)
+	t.Frame.EndFrame()
+
+	_, err := t.Transport.Write(t.Frame.OutgoingBuffer)
 	if err != nil {
-		serialPort.Close()
-		serialPort = nil // Reset connection
+		log.Printf("Failed to publish topic: %s, error: %v", topic, err)
 		return err
 	}
+	log.Printf("Published topic: %s, payload: %X", topic, payload)
 	return nil
 }
 
-func processFrame(frame []byte) {
-	log.Printf("[INFO] Processing frame: %s\n", string(frame))
-	if len(frame) < 6 {
-		fmt.Println("[ERROR] Frame too small")
-		return
-	}
-
-	if frame[0] != SOF || frame[len(frame)-1] != EOF {
-		fmt.Println("[ERROR] Invalid SOF or EOF")
-		return
-	}
-
-	buf := bytes.NewBuffer(frame[1 : len(frame)-3]) // Exclude SOF and EOF
-	var tType TMType
-	if err := binary.Read(buf, binary.LittleEndian, &tType); err != nil {
-		fmt.Printf("[ERROR] Failed to read type: %v\n", err)
-		return
-	}
-
-	topicBytes, err := buf.ReadBytes(0)
-	if err != nil {
-		fmt.Printf("[ERROR] Failed to read topic: %v\n", err)
-		return
-	}
-	topic := string(topicBytes[:len(topicBytes)-1])
-
-	payload := buf.Bytes()[:len(buf.Bytes())-2]
-	crc := binary.LittleEndian.Uint16(buf.Bytes()[len(buf.Bytes())-2:])
-
-	if crc != calculateCRC(frame[1:len(frame)-3]) {
-		fmt.Println("[ERROR] CRC mismatch")
-		return
-	}
-
-	telemetryState.RLock()
-	callback, exists := telemetryState.callbacks[topic]
-	telemetryState.RUnlock()
-	if exists {
-		msg := &TMMessage{Topic: topic, Type: tType, Data: payload}
-		callback(msg)
-	}
-}
-
-func GetUSBPort() (io.ReadWriteCloser, enumerator.PortDetails, error) {
-	ports, err := enumerator.GetDetailedPortsList()
-	if err != nil {
-		log.Fatal(err)
-	}
-	if len(ports) == 0 {
-		fmt.Println("No serial ports found!")
-		return nil, enumerator.PortDetails{}, errors.New("no serial ports found")
-	}
-	for _, port := range ports {
-		if port.IsUSB && port.VID == VendorID && port.PID == ProductID {
-			mode := &serial.Mode{BaudRate: 115200}
-			serPort, err := serial.Open(port.Name, mode)
+func (t *Telemetry) UpdateTelemetry() {
+	go func() {
+		buffer := make([]byte, IncomingBufferSize)
+		for {
+			n, err := t.Transport.Read(buffer)
 			if err != nil {
-				return nil, *port, err
+				log.Printf("Error reading from transport: %v", err)
+				continue
 			}
-			return serPort, *port, nil
+
+			for i := 0; i < n; i++ {
+				t.Frame.FeedByte(buffer[i])
+			}
+
 		}
-	}
-	return nil, enumerator.PortDetails{}, errors.New("no matching USB port found")
+	}()
 }
 
-func UpdateTelemetry() {
-	buffer := make([]byte, 256)
-	for {
-		serialLock.Lock()
-		if serialPort == nil {
-			serialLock.Unlock()
-			time.Sleep(1 * time.Second)
-			continue
+func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
+
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
+
+	t.ReceivedTopics[msg.Topic] = true
+	/*
+		if callback, exists := t.TopicCallbacks[msg.Topic]; exists {
+			callback(msg)
+			return
 		}
-		n, err := serialPort.Read(buffer)
-		serialLock.Unlock()
-		if err != nil {
-			fmt.Printf("[ERROR] Failed to read: %v\n", err)
-			serialLock.Lock()
-			serialPort.Close()
-			serialPort = nil
-			serialLock.Unlock()
-			continue
+	*/
+	// if the topic is not found in the hash table, insert it
+	if _, ok := t.HashTable[msg.Topic]; !ok {
+		switch msg.Type {
+		case TMFloat32:
+			t.HashTable[msg.Topic] = new(float32)
+		case TMUint8:
+			t.HashTable[msg.Topic] = new(uint8)
+		case TMUint16:
+			t.HashTable[msg.Topic] = new(uint16)
+		case TMUint32:
+			t.HashTable[msg.Topic] = new(uint32)
+		case TMInt8:
+			t.HashTable[msg.Topic] = new(int8)
+		case TMInt16:
+			t.HashTable[msg.Topic] = new(int16)
+		case TMInt32:
+			t.HashTable[msg.Topic] = new(int32)
+		case TMString:
+			t.HashTable[msg.Topic] = new(string)
+		default:
+			log.Printf("Unknown topic type: %d", msg.Type)
 		}
-		processFrame(buffer[:n])
+		log.Printf("Inserted topic: %s", msg.Topic)
 	}
+
+	if variable, ok := t.HashTable[msg.Topic]; ok {
+		switch v := variable.(type) {
+		case *float32:
+			if msg.Type == TMFloat32 && len(msg.Payload) == 4 {
+				bits := binary.LittleEndian.Uint32(msg.Payload)
+				*v = math.Float32frombits(bits)
+			}
+		case *uint8:
+			if msg.Type == TMUint8 && len(msg.Payload) == 1 {
+				*v = msg.Payload[0]
+			}
+		case *uint16:
+			if msg.Type == TMUint16 && len(msg.Payload) == 2 {
+				*v = binary.LittleEndian.Uint16(msg.Payload)
+			}
+		case *uint32:
+			if msg.Type == TMUint32 && len(msg.Payload) == 4 {
+				*v = binary.LittleEndian.Uint32(msg.Payload)
+			}
+		case *int8:
+			if msg.Type == TMInt8 && len(msg.Payload) == 1 {
+				*v = int8(msg.Payload[0])
+			}
+		case *int16:
+			if msg.Type == TMInt16 && len(msg.Payload) == 2 {
+				*v = int16(binary.LittleEndian.Uint16(msg.Payload))
+			}
+		case *int32:
+			if msg.Type == TMInt32 && len(msg.Payload) == 4 {
+				*v = int32(binary.LittleEndian.Uint32(msg.Payload))
+			}
+		case *string:
+			if msg.Type == TMString {
+				*v = string(msg.Payload)
+			}
+		default:
+			log.Printf("Unknown topic type: %T", v)
+		}
+		//log.Printf("Updated topic: %s", msg.Topic)
+	} else {
+		//log.Printf("Topic not found: %s", msg.Topic)
+	}
+	t.PrintHashTable()
+}
+
+// PrintHashTable prints the current values stored in the telemetry's hash table.
+func (t *Telemetry) PrintHashTable() {
+
+	fmt.Println("Current Hash Table Values:")
+	for topic, value := range t.HashTable {
+		switch v := value.(type) {
+		case *float32:
+			fmt.Printf("Topic: %s, Value: %f\n", topic, *v)
+		case *uint8:
+			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
+		case *uint16:
+			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
+		case *uint32:
+			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
+		case *int8:
+			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
+		case *int16:
+			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
+		case *int32:
+			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
+		case *string:
+			fmt.Printf("Topic: %s, Value: %s\n", topic, *v)
+		default:
+			fmt.Printf("Topic: %s, Value: Unknown Type\n", topic)
+		}
+	}
+}
+
+func (t *Telemetry) GetAvailableTopics() []string {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
+
+	topics := make([]string, 0, len(t.ReceivedTopics))
+	for topic := range t.ReceivedTopics {
+		topics = append(topics, topic)
+	}
+	return topics
 }
 
 func main() {
-	InitTelemetry()
-
-	/*subscribe("example", func(msg *TMMessage) {
-		fmt.Printf("[INFO] Received message: %+v\n", msg)
-	})*/
-
-	go UpdateTelemetry()
-
-	for {
-		err := Publish("valve_command", uint8(4))
-		if err != nil {
-			fmt.Printf("[ERROR] Publish failed: %v\n", err)
-		}
-		time.Sleep(5 * time.Second)
+	// Configure serial port
+	serialConfig := &serial.Config{
+		Name:        "COM5",
+		Baud:        115200,
+		ReadTimeout: time.Millisecond * 500,
 	}
+
+	port, err := serial.OpenPort(serialConfig)
+	if err != nil {
+		log.Fatalf("Failed to open serial port: %v", err)
+	}
+
+	transport := &TMTransport{
+		Read:  port.Read,
+		Write: port.Write,
+	}
+
+	telemetry := NewTelemetry(transport)
+
+	topic := "hello"
+	// convert value to bytes
+	buf := make([]byte, 2)
+	binary.LittleEndian.PutUint16(buf, 51966)
+	telemetry.Publish(topic, TMUint16, buf)
+
+	telemetry.UpdateTelemetry()
+
+	go func() {
+		time.Sleep(5 * time.Second) // Wait for topics to accumulate
+		topics := telemetry.GetAvailableTopics()
+		log.Printf("Available topics: %v", topics)
+		telemetry.PrintHashTable()
+	}()
+
+	select {}
 }
