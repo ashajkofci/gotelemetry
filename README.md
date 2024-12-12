@@ -89,6 +89,83 @@ func main() {
 }
 ```
 
+
+### Attaching variables to topics
+```go
+package main
+
+import (
+    "log"
+    "path/to/telemetry"
+)
+
+func main() {
+    // Initialize telemetry with a mock transport for testing
+    mockTransport := &telemetry.MockTransport{}
+    tele := telemetry.NewTelemetry(&telemetry.TMTransport{
+        Read:  mockTransport.Read,
+        Write: mockTransport.Write,
+    })
+
+    // Attach variables to topics
+    var intValue int32
+    var floatValue float32
+    tele.Attach("int_topic", &intValue)
+    tele.Attach("float_topic", &floatValue)
+
+    // Simulate receiving messages
+    tele.TryUpdateHashTable(telemetry.TMMsg{
+        Type:    telemetry.TMInt32,
+        Topic:   "int_topic",
+        Payload: []byte{0, 0, 0, 42},
+    })
+    tele.TryUpdateHashTable(telemetry.TMMsg{
+        Type:    telemetry.TMFloat32,
+        Topic:   "float_topic",
+        Payload: []byte{0, 0, 128, 63},
+    })
+
+    log.Printf("int_topic value: %d", intValue)
+    log.Printf("float_topic value: %f", floatValue)
+}
+```
+
+### Publishing and subscribing to multiple topics
+```go
+package main
+
+import (
+    "log"
+    "path/to/telemetry"
+)
+
+func main() {
+    // Initialize telemetry with a mock transport for testing
+    mockTransport := &telemetry.MockTransport{}
+    tele := telemetry.NewTelemetry(&telemetry.TMTransport{
+        Read:  mockTransport.Read,
+        Write: mockTransport.Write,
+    })
+
+    // Subscribe to multiple topics
+    tele.Subscribe("topic1", func(msg telemetry.TMMsg) {
+        log.Printf("Received on topic1: %s", msg.Payload)
+    })
+    tele.Subscribe("topic2", func(msg telemetry.TMMsg) {
+        log.Printf("Received on topic2: %s", msg.Payload)
+    })
+
+    // Publish messages to different topics
+    tele.Publish("topic1", telemetry.TMString, []byte("Hello Topic 1"))
+    tele.Publish("topic2", telemetry.TMString, []byte("Hello Topic 2"))
+
+    // Start listening for incoming messages
+    tele.UpdateTelemetry()
+
+    select {} // Keep the program running
+}
+```
+
 ## API Documentation
 
 ### `Telemetry` Structure
