@@ -13,7 +13,7 @@
  * License: MIT License
  * Author: Adrian Shajkofci, 2024
  */
-package main
+package gotelemetry
 
 import (
 	"testing"

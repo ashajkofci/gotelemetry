@@ -1,4 +1,4 @@
-package main
+package gotelemetry
 
 // Definitions for the CRC16 computation
 func CRC16(data []byte) uint16 {

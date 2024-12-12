@@ -1,4 +1,4 @@
-package main
+package gotelemetry
 
 /*
  * Telemetry Library in Go
