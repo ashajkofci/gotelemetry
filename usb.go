@@ -46,6 +46,7 @@ func GetUSBPort() (serial.Port, *enumerator.PortDetails, error) {
 				StopBits: serial.OneStopBit,
 			}
 			serPort, err := serial.Open(port.Name, mode)
+			serPort.SetReadTimeout(1000)
 			if err != nil {
 				return nil, port, err
 			}
