@@ -24,6 +24,7 @@ import (
 	"log"
 	"math"
 	"sync"
+	"syscall"
 )
 
 // Telemetry Core
@@ -167,14 +168,19 @@ func (t *Telemetry) UpdateTelemetry() {
 		for {
 			n, err := t.Transport.Read(buffer)
 			if err != nil {
+				// Handle interrupted system calls (EINTR)
+				if errors.Is(err, syscall.EINTR) {
+					log.Println("Interrupted system call, retrying...")
+					continue
+				}
 				log.Printf("Error reading from transport: %v", err)
 				continue
 			}
 
+			// Process the received bytes
 			for i := 0; i < n; i++ {
 				t.Frame.FeedByte(buffer[i])
 			}
-
 		}
 	}()
 }

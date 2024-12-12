@@ -41,6 +41,9 @@ func GetUSBPort() (serial.Port, *enumerator.PortDetails, error) {
 		if port.IsUSB && port.VID == VendorID && port.PID == ProductID {
 			mode := &serial.Mode{
 				BaudRate: 115200,
+				DataBits: 8,
+				Parity:   serial.NoParity,
+				StopBits: serial.OneStopBit,
 			}
 			serPort, err := serial.Open(port.Name, mode)
 			if err != nil {
