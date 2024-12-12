@@ -1,4 +1,4 @@
-module bactosense/gotelemetry
+module github.com/ashajkofci/gotelemetry
 
 go 1.22.3
 
