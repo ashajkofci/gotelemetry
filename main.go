@@ -59,12 +59,13 @@ type TMTransport struct {
 }
 
 type Telemetry struct {
-	Frame          *Frame
-	HashTable      map[string]interface{}
-	TopicCallbacks map[string]func(TMMsg)
-	Transport      *TMTransport
-	Mutex          sync.Mutex
-	ReceivedTopics map[string]bool
+	Frame           *Frame
+	HashTable       map[string]interface{}
+	TopicCallbacks  map[string]func(TMMsg)
+	GeneralCallback func(TMMsg)
+	Transport       *TMTransport
+	Mutex           sync.Mutex
+	ReceivedTopics  map[string]bool
 }
 
 func NewTelemetry(transport *TMTransport) *Telemetry {
@@ -124,6 +125,11 @@ func (t *Telemetry) Attach(topic string, variable interface{}) {
 func (t *Telemetry) Subscribe(topic string, callback func(TMMsg)) {
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()
+	if topic == "" {
+		t.GeneralCallback = callback
+		log.Printf("Subscribed to all topics")
+		return
+	}
 	t.TopicCallbacks[topic] = callback
 	log.Printf("Subscribed to topic: %s", topic)
 }
@@ -249,6 +255,40 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 			log.Printf("Unknown topic type: %T", v)
 		}
 	}
+
+	// Use general call back after updating hash table so that the user can access the updated values
+	if t.GeneralCallback != nil {
+		t.GeneralCallback(msg)
+	}
+}
+
+// GetValue returns the value of a topic in the hash table.
+func (t *Telemetry) GetValue(topic string) interface{} {
+	// if it's a pointer to a variable, return the value
+	if value, ok := t.HashTable[topic]; ok {
+		switch v := value.(type) {
+		case *float32:
+			return *v
+		case *uint8:
+			return *v
+		case *uint16:
+			return *v
+		case *uint32:
+			return *v
+		case *int8:
+			return *v
+		case *int16:
+			return *v
+		case *int32:
+			return *v
+		case *string:
+			return *v
+		default:
+			log.Printf("Unknown topic type: %T", v)
+			return nil
+		}
+	}
+	return nil
 }
 
 // PrintHashTable prints the current values stored in the telemetry's hash table.
@@ -305,6 +345,10 @@ func main() {
 	}
 
 	telemetry := NewTelemetry(transport)
+
+	telemetry.Subscribe("", func(msg TMMsg) {
+		//log.Printf("Received topic: %s, value: %v", msg.Topic, telemetry.GetValue(msg.Topic))
+	})
 
 	topic := "hello"
 	// convert value to bytes
