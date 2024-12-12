@@ -25,12 +25,12 @@ import (
 )
 
 const (
-	VendorID  = "0403"
-	ProductID = "6015"
+	VendorID  = "0403" // Default vendor for FTDI devices
+	ProductID = "6015" // Default product for FTDI devices
 )
 
 // GetUSBPort scans for available USB ports and returns the first one that matches the specified VendorID and ProductID.
-func GetUSBPort() (serial.Port, *enumerator.PortDetails, error) {
+func GetUSBPort(vendorId string, productId string) (serial.Port, *enumerator.PortDetails, error) {
 	ports, err := enumerator.GetDetailedPortsList()
 	if err != nil {
 		log.Fatal(err)
@@ -38,8 +38,16 @@ func GetUSBPort() (serial.Port, *enumerator.PortDetails, error) {
 	if len(ports) == 0 {
 		return nil, nil, errors.New("no serial ports found")
 	}
+
+	if vendorId == "" {
+		vendorId = VendorID
+	}
+	if productId == "" {
+		productId = ProductID
+	}
+
 	for _, port := range ports {
-		if port.IsUSB && port.VID == VendorID && port.PID == ProductID {
+		if port.IsUSB && port.VID == vendorId && port.PID == productId {
 			mode := &serial.Mode{
 				BaudRate: 115200,
 			}
