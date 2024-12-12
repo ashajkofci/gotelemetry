@@ -1,3 +1,5 @@
+package main
+
 /*
  * Telemetry Library in Go
  *
@@ -13,7 +15,6 @@
  * License: MIT License
  * Author: Adrian Shajkofci, 2024
  */
-package main
 
 import (
 	"errors"

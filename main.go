@@ -1,3 +1,5 @@
+package main
+
 /*
  * Telemetry Library in Go
  *
@@ -14,8 +16,6 @@
  * Author: Adrian Shajkofci, 2024
  */
 
-package main
-
 import (
 	"bytes"
 	"encoding/binary"
@@ -25,119 +25,7 @@ import (
 	"math"
 	"sync"
 	"time"
-
-	"github.com/albenik/go-serial"
 )
-
-// Definitions for the CRC16 computation
-func CRC16(data []byte) uint16 {
-	remainder := uint16(0)
-
-	for _, b := range data {
-		remainder = CRC16Recursive(b, remainder)
-	}
-	log.Printf("CRC16 calculated for data: %X -> %X", data, remainder)
-	return remainder
-}
-
-func CRC16Recursive(byteVal byte, remainder uint16) uint16 {
-	n := 16
-	remainder ^= uint16(byteVal) << (n - 8)
-
-	for j := 1; j < 8; j++ {
-		if remainder&0x8000 != 0 {
-			remainder = (remainder << 1) ^ 0x1021
-		} else {
-			remainder <<= 1
-		}
-		remainder &= 0xFFFF
-	}
-	return remainder
-}
-
-// Frame handling
-const (
-	SOF = 0xF7
-	EOF = 0x7F
-	ESC = 0x7D
-)
-
-type FramingState int
-
-const (
-	Idle FramingState = iota
-	Escaping
-	Active
-)
-
-type Frame struct {
-	IncomingBuffer []byte
-	OutgoingBuffer []byte
-	IncomingState  FramingState
-	OnFrame        func(data []byte)
-	OnError        func(err error)
-}
-
-func NewFrame() *Frame {
-	return &Frame{
-		IncomingBuffer: make([]byte, 0),
-		OutgoingBuffer: make([]byte, 0),
-		IncomingState:  Idle,
-		OnFrame:        nil,
-		OnError:        nil,
-	}
-}
-
-func (f *Frame) BeginFrame() {
-	f.OutgoingBuffer = []byte{SOF}
-	log.Println("Frame started.")
-}
-
-func (f *Frame) AppendByte(b byte) {
-	if b == SOF || b == EOF || b == ESC {
-		f.OutgoingBuffer = append(f.OutgoingBuffer, ESC)
-	}
-	f.OutgoingBuffer = append(f.OutgoingBuffer, b)
-	log.Printf("Appended byte: %X", b)
-}
-
-func (f *Frame) AppendUint16(value uint16) {
-	buf := make([]byte, 2)
-	binary.LittleEndian.PutUint16(buf, value)
-	for _, b := range buf {
-		f.AppendByte(b)
-	}
-	log.Printf("Appended uint16: %X", value)
-}
-
-func (f *Frame) EndFrame() {
-	f.OutgoingBuffer = append(f.OutgoingBuffer, EOF)
-	log.Println("Frame ended.")
-}
-
-func (f *Frame) FeedByte(b byte) {
-	switch f.IncomingState {
-	case Idle:
-		if b == SOF {
-			f.IncomingBuffer = []byte{}
-			f.IncomingState = Active
-		}
-	case Escaping:
-		f.IncomingBuffer = append(f.IncomingBuffer, b)
-		f.IncomingState = Active
-	case Active:
-		if b == EOF {
-			if f.OnFrame != nil {
-				f.OnFrame(f.IncomingBuffer)
-			}
-			f.IncomingState = Idle
-		} else if b == ESC {
-			f.IncomingState = Escaping
-		} else {
-			f.IncomingBuffer = append(f.IncomingBuffer, b)
-		}
-	}
-}
 
 // Telemetry Core
 const (
@@ -363,8 +251,6 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 			log.Printf("Unknown topic type: %T", v)
 		}
 		//log.Printf("Updated topic: %s", msg.Topic)
-	} else {
-		//log.Printf("Topic not found: %s", msg.Topic)
 	}
 	t.PrintHashTable()
 }
@@ -409,15 +295,13 @@ func (t *Telemetry) GetAvailableTopics() []string {
 }
 
 func main() {
-	// Configure serial port
-	serialConfig := &serial.Mode{
-		BaudRate: 115200,
+
+	port, portDetails, err := GetUSBPort()
+	if err != nil {
+		log.Fatalf("Failed to get USB port: %v", err)
 	}
 
-	port, err := serial.Open("COM5", serialConfig)
-	if err != nil {
-		log.Fatalf("Failed to open serial port: %v", err)
-	}
+	log.Printf("USB port found: %s, VID: %s, PID: %s", portDetails.Name, portDetails.VID, portDetails.PID)
 
 	transport := &TMTransport{
 		Read:  port.Read,
