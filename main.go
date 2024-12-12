@@ -24,7 +24,6 @@ import (
 	"log"
 	"math"
 	"sync"
-	"time"
 )
 
 // Telemetry Core
@@ -330,6 +329,7 @@ func (t *Telemetry) GetAvailableTopics() []string {
 	return topics
 }
 
+/*
 func main() {
 
 	port, portDetails, err := GetUSBPort()
@@ -367,3 +367,4 @@ func main() {
 
 	select {}
 }
+*/
