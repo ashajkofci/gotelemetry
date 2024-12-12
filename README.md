@@ -10,7 +10,7 @@ This repository provides a Go implementation of a telemetry system based on fram
   - Attach variables to topics.
   - Subscribe to topics with callbacks.
   - Publish messages to topics.
-- **Serial Communication**: Uses `github.com/tarm/serial` for serial port interaction.
+- **Serial Communication**: Uses `github.com/albenik/go-serial` for serial port interaction.
 
 ## Installation
 

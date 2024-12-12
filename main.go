@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tarm/serial"
+	"github.com/albenik/go-serial"
 )
 
 // Definitions for the CRC16 computation
@@ -410,13 +410,11 @@ func (t *Telemetry) GetAvailableTopics() []string {
 
 func main() {
 	// Configure serial port
-	serialConfig := &serial.Config{
-		Name:        "COM5",
-		Baud:        115200,
-		ReadTimeout: time.Millisecond * 500,
+	serialConfig := &serial.Mode{
+		BaudRate: 115200,
 	}
 
-	port, err := serial.OpenPort(serialConfig)
+	port, err := serial.Open("COM5", serialConfig)
 	if err != nil {
 		log.Fatalf("Failed to open serial port: %v", err)
 	}
