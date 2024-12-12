@@ -57,16 +57,25 @@ type TMTransport struct {
 	Write func([]byte) (int, error)
 }
 
+// Telemetry represents the core telemetry system, handling frame parsing, topic-based messaging, and CRC validation.
 type Telemetry struct {
-	Frame           *Frame
-	HashTable       map[string]interface{}
-	TopicCallbacks  map[string]func(TMMsg)
+	// Frame handles the framing protocol for incoming and outgoing messages.
+	Frame *Frame
+	// HashTable stores the values of attached variables by topic.
+	HashTable map[string]interface{}
+	// TopicCallbacks stores the callbacks for specific topics.
+	TopicCallbacks map[string]func(TMMsg)
+	// GeneralCallback is called for any received message if no specific topic callback is registered.
 	GeneralCallback func(TMMsg)
-	Transport       *TMTransport
-	Mutex           sync.Mutex
-	ReceivedTopics  map[string]bool
+	// Transport handles the read and write operations for the telemetry system.
+	Transport *TMTransport
+	// Mutex ensures thread-safe access to the telemetry system's data structures.
+	Mutex sync.Mutex
+	// ReceivedTopics keeps track of all received topics.
+	ReceivedTopics map[string]bool
 }
 
+// NewTelemetry creates a new telemetry instance with the provided transport.
 func NewTelemetry(transport *TMTransport) *Telemetry {
 	t := &Telemetry{
 		Frame:          NewFrame(),
@@ -87,6 +96,7 @@ func NewTelemetry(transport *TMTransport) *Telemetry {
 	return t
 }
 
+// parseFrame parses a received frame into a TMMsg.
 func (t *Telemetry) parseFrame(data []byte) (TMMsg, error) {
 
 	if len(data) < 4 { // Minimum length to include header and topic
@@ -114,6 +124,7 @@ func (t *Telemetry) parseFrame(data []byte) (TMMsg, error) {
 	}, nil
 }
 
+// Attach links a variable to a topic for automatic updates.
 func (t *Telemetry) Attach(topic string, variable interface{}) {
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()
@@ -121,6 +132,7 @@ func (t *Telemetry) Attach(topic string, variable interface{}) {
 	log.Printf("Attached topic: %s", topic)
 }
 
+// Subscribe registers a callback for a specific topic. If the topic is an empty string, the callback is called for any received message.
 func (t *Telemetry) Subscribe(topic string, callback func(TMMsg)) {
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()
@@ -133,6 +145,7 @@ func (t *Telemetry) Subscribe(topic string, callback func(TMMsg)) {
 	log.Printf("Subscribed to topic: %s", topic)
 }
 
+// Publish sends a message to a topic with the specified type and payload.
 func (t *Telemetry) Publish(topic string, msgType TMType, payload []byte) error {
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()
@@ -161,6 +174,7 @@ func (t *Telemetry) Publish(topic string, msgType TMType, payload []byte) error 
 	return nil
 }
 
+// UpdateTelemetry starts listening for incoming messages and processes them.
 func (t *Telemetry) UpdateTelemetry() {
 	go func() {
 		buffer := make([]byte, IncomingBufferSize)
@@ -179,6 +193,7 @@ func (t *Telemetry) UpdateTelemetry() {
 	}()
 }
 
+// TryUpdateHashTable updates the hash table with the received message and calls the appropriate callbacks.
 func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 
 	t.Mutex.Lock()
@@ -318,6 +333,7 @@ func (t *Telemetry) PrintHashTable() {
 	}
 }
 
+// GetAvailableTopics returns a list of all received topics.
 func (t *Telemetry) GetAvailableTopics() []string {
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()

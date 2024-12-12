@@ -29,6 +29,7 @@ const (
 	ProductID = "6015"
 )
 
+// GetUSBPort scans for available USB ports and returns the first one that matches the specified VendorID and ProductID.
 func GetUSBPort() (serial.Port, *enumerator.PortDetails, error) {
 	ports, err := enumerator.GetDetailedPortsList()
 	if err != nil {

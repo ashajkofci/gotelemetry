@@ -1,6 +1,6 @@
 package gotelemetry
 
-// Definitions for the CRC16 computation
+// CRC16 computes the CRC-CCITT (0x1021) checksum for the given data.
 func CRC16(data []byte) uint16 {
 	remainder := uint16(0)
 
@@ -10,6 +10,7 @@ func CRC16(data []byte) uint16 {
 	return remainder
 }
 
+// CRC16Recursive performs the CRC-CCITT (0x1021) computation for a single byte.
 func CRC16Recursive(byteVal byte, remainder uint16) uint16 {
 	n := 16
 	remainder ^= uint16(byteVal) << (n - 8)

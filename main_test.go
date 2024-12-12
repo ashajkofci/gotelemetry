@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestListUSBPorts tests the GetUSBPort function to ensure it correctly identifies a USB port with the specified VendorID and ProductID.
 func TestListUSBPorts(t *testing.T) {
 	port, portDetails, err := GetUSBPort()
 	assert.Nil(t, err)
@@ -29,6 +30,7 @@ func TestListUSBPorts(t *testing.T) {
 	assert.Equal(t, "0403", portDetails.VID)
 }
 
+// TestInitTelemetry tests the initialization of the Telemetry system.
 func TestInitTelemetry(t *testing.T) {
 
 }
