@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/binary"
-	"log"
 )
 
 // Frame handling
@@ -47,7 +46,6 @@ func (f *Frame) AppendByte(b byte) {
 		f.OutgoingBuffer = append(f.OutgoingBuffer, ESC)
 	}
 	f.OutgoingBuffer = append(f.OutgoingBuffer, b)
-	log.Printf("Appended byte: %X", b)
 }
 
 func (f *Frame) AppendUint16(value uint16) {
@@ -56,7 +54,6 @@ func (f *Frame) AppendUint16(value uint16) {
 	for _, b := range buf {
 		f.AppendByte(b)
 	}
-	log.Printf("Appended uint16: %X", value)
 }
 
 func (f *Frame) EndFrame() {

@@ -153,7 +153,6 @@ func (t *Telemetry) Publish(topic string, msgType TMType, payload []byte) error 
 		log.Printf("Failed to publish topic: %s, error: %v", topic, err)
 		return err
 	}
-	log.Printf("Published topic: %s, payload: %X", topic, payload)
 	return nil
 }
 
@@ -181,12 +180,12 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 	defer t.Mutex.Unlock()
 
 	t.ReceivedTopics[msg.Topic] = true
-	/*
-		if callback, exists := t.TopicCallbacks[msg.Topic]; exists {
-			callback(msg)
-			return
-		}
-	*/
+
+	if callback, exists := t.TopicCallbacks[msg.Topic]; exists {
+		callback(msg)
+		return
+	}
+
 	// if the topic is not found in the hash table, insert it
 	if _, ok := t.HashTable[msg.Topic]; !ok {
 		switch msg.Type {
@@ -209,7 +208,6 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 		default:
 			log.Printf("Unknown topic type: %d", msg.Type)
 		}
-		log.Printf("Inserted topic: %s", msg.Topic)
 	}
 
 	if variable, ok := t.HashTable[msg.Topic]; ok {
@@ -250,9 +248,7 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 		default:
 			log.Printf("Unknown topic type: %T", v)
 		}
-		//log.Printf("Updated topic: %s", msg.Topic)
 	}
-	t.PrintHashTable()
 }
 
 // PrintHashTable prints the current values stored in the telemetry's hash table.

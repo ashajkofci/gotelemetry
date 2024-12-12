@@ -1,7 +1,5 @@
 package main
 
-import "log"
-
 // Definitions for the CRC16 computation
 func CRC16(data []byte) uint16 {
 	remainder := uint16(0)
@@ -9,7 +7,6 @@ func CRC16(data []byte) uint16 {
 	for _, b := range data {
 		remainder = CRC16Recursive(b, remainder)
 	}
-	log.Printf("CRC16 calculated for data: %X -> %X", data, remainder)
 	return remainder
 }
 
