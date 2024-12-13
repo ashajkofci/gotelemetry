@@ -224,16 +224,10 @@ func (t *Telemetry) reconnect() {
 
 // TryUpdateHashTable updates the hash table with the received message and calls the appropriate callbacks.
 func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
-
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()
 
 	t.ReceivedTopics[msg.Topic] = true
-
-	if callback, exists := t.TopicCallbacks[msg.Topic]; exists {
-		callback(msg)
-		return
-	}
 
 	// if the topic is not found in the hash table, insert it
 	if _, ok := t.HashTable[msg.Topic]; !ok {
@@ -259,12 +253,14 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 		}
 	}
 
+	// Check if the value has changed before updating
+	valueChanged := false
 	if variable, ok := t.HashTable[msg.Topic]; ok {
-		switch v := variable.(type) {
+		newValue := reflect.New(reflect.TypeOf(variable).Elem()).Interface()
+		switch v := newValue.(type) {
 		case *float32:
 			if msg.Type == TMFloat32 && len(msg.Payload) == 4 {
-				bits := binary.LittleEndian.Uint32(msg.Payload)
-				*v = math.Float32frombits(bits)
+				*v = math.Float32frombits(binary.LittleEndian.Uint32(msg.Payload))
 			}
 		case *uint8:
 			if msg.Type == TMUint8 && len(msg.Payload) == 1 {
@@ -297,10 +293,21 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 		default:
 			log.Printf("Unknown topic type: %T", v)
 		}
+
+		if !reflect.DeepEqual(variable, newValue) {
+			reflect.ValueOf(variable).Elem().Set(reflect.ValueOf(newValue).Elem())
+			valueChanged = true
+		}
 	}
 
-	// Use general call back after updating hash table so that the user can access the updated values
-	if t.GeneralCallback != nil {
+	// Use specific callback if it exists and value is changed
+	if callback, exists := t.TopicCallbacks[msg.Topic]; valueChanged && exists {
+		callback(msg)
+		return
+	}
+
+	// Use general callback only if the value has changed
+	if valueChanged && t.GeneralCallback != nil {
 		t.GeneralCallback(msg)
 	}
 }
@@ -369,45 +376,3 @@ func (t *Telemetry) GetAvailableTopics() []string {
 	}
 	return topics
 }
-
-/*
-func main() {
-
-	port, portDetails, err := GetUSBPort()
-	if err != nil {
-		log.Fatalf("Failed to get USB port: %v", err)
-	}
-
-	log.Printf("USB port found: %s, VID: %s, PID: %s", portDetails.Name, portDetails.VID, portDetails.PID)
-
-	transport := &TMTransport{
-		Read:  port.Read,
-		Write: port.Write,
-	}
-
-	telemetry := NewTelemetry(transport)
-
-	telemetry.Subscribe("", func(msg TMMsg) {
-		//log.Printf("Received topic: %s, value: %v", msg.Topic, telemetry.GetValue(msg.Topic))
-	})
-
-	topic := "hello"
-	// convert value to bytes
-	buf := make([]byte, 2)
-	binary.LittleEndian.PutUint16(buf, 51966)
-	telemetry.Publish(topic, TMUint16, buf)
-
-	stopChan := make(chan struct{})
-	telemetry.UpdateTelemetry(stopChan)
-
-	go func() {
-		time.Sleep(5 * time.Second) // Wait for topics to accumulate
-		topics := telemetry.GetAvailableTopics()
-		log.Printf("Available topics: %v", topics)
-		telemetry.PrintHashTable()
-		close(stopChan) // Stop the telemetry update
-	}()
-
-	select {}
-}
-*/

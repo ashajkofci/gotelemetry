@@ -178,3 +178,47 @@ func TestUpdateTelemetryStopChannel(t *testing.T) {
 	// Ensure the telemetry has stopped by checking if the read buffer is empty
 	assert.Empty(t, mockTransport.ReadBuffer)
 }
+
+// TestGeneralCallbackOnHashTableChange tests that the general callback is triggered only when the hash table value changes.
+func TestGeneralCallbackOnHashTableChange(t *testing.T) {
+	mockTransport := &MockTransport{}
+	telemetry := NewTelemetry(&TMTransport{
+		Read:  mockTransport.Read,
+		Write: mockTransport.Write,
+	})
+
+	var callbackTriggered bool
+	telemetry.GeneralCallback = func(msg TMMsg) {
+		callbackTriggered = true
+	}
+
+	var value uint8
+	telemetry.Attach("test_topic", &value)
+
+	// First update should trigger the callback
+	telemetry.TryUpdateHashTable(TMMsg{
+		Type:    TMUint8,
+		Topic:   "test_topic",
+		Payload: []byte{42},
+	})
+	assert.True(t, callbackTriggered)
+
+	// Reset the flag
+	callbackTriggered = false
+
+	// Second update with the same value should not trigger the callback
+	telemetry.TryUpdateHashTable(TMMsg{
+		Type:    TMUint8,
+		Topic:   "test_topic",
+		Payload: []byte{42},
+	})
+	assert.False(t, callbackTriggered)
+
+	// Update with a different value should trigger the callback
+	telemetry.TryUpdateHashTable(TMMsg{
+		Type:    TMUint8,
+		Topic:   "test_topic",
+		Payload: []byte{43},
+	})
+	assert.True(t, callbackTriggered)
+}
