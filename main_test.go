@@ -136,8 +136,8 @@ func TestUpdateTelemetry(t *testing.T) {
 	telemetry.Subscribe("test_topic", func(msg TMMsg) {
 		receivedMsg = msg
 	})
-
-	telemetry.UpdateTelemetry()
+	stopChan := make(chan struct{})
+	telemetry.UpdateTelemetry(stopChan)
 
 	// Simulate reading from the transport
 	buffer := make([]byte, IncomingBufferSize)

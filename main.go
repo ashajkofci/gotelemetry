@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"reflect"
 	"sync"
 )
 
@@ -175,20 +176,25 @@ func (t *Telemetry) Publish(topic string, msgType TMType, payload []byte) error 
 }
 
 // UpdateTelemetry starts listening for incoming messages and processes them.
-func (t *Telemetry) UpdateTelemetry() {
+func (t *Telemetry) UpdateTelemetry(stopChan chan struct{}) {
 	go func() {
 		buffer := make([]byte, IncomingBufferSize)
 		for {
-			n, err := t.Transport.Read(buffer)
-			if err != nil {
-				log.Printf("Error reading from transport: %v", err)
-				continue
-			}
+			select {
+			case <-stopChan:
+				log.Println("Stopping telemetry update.")
+				return
+			default:
+				n, err := t.Transport.Read(buffer)
+				if err != nil {
+					log.Printf("Error reading from transport: %v", err)
+					continue
+				}
 
-			for i := 0; i < n; i++ {
-				t.Frame.FeedByte(buffer[i])
+				for i := 0; i < n; i++ {
+					t.Frame.FeedByte(buffer[i])
+				}
 			}
-
 		}
 	}()
 }
@@ -307,27 +313,23 @@ func (t *Telemetry) GetValue(topic string) interface{} {
 
 // PrintHashTable prints the current values stored in the telemetry's hash table.
 func (t *Telemetry) PrintHashTable() {
-
 	fmt.Println("Current Hash Table Values:")
+	formatMap := map[string]string{
+		"*float32": "%f",
+		"*uint8":   "%d",
+		"*uint16":  "%d",
+		"*uint32":  "%d",
+		"*int8":    "%d",
+		"*int16":   "%d",
+		"*int32":   "%d",
+		"*string":  "%s",
+	}
+
 	for topic, value := range t.HashTable {
-		switch v := value.(type) {
-		case *float32:
-			fmt.Printf("Topic: %s, Value: %f\n", topic, *v)
-		case *uint8:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *uint16:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *uint32:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *int8:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *int16:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *int32:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *string:
-			fmt.Printf("Topic: %s, Value: %s\n", topic, *v)
-		default:
+		valueType := fmt.Sprintf("%T", value)
+		if format, ok := formatMap[valueType]; ok {
+			fmt.Printf("Topic: %s, Value: "+format+"\n", topic, reflect.ValueOf(value).Elem())
+		} else {
 			fmt.Printf("Topic: %s, Value: Unknown Type\n", topic)
 		}
 	}
@@ -372,13 +374,15 @@ func main() {
 	binary.LittleEndian.PutUint16(buf, 51966)
 	telemetry.Publish(topic, TMUint16, buf)
 
-	telemetry.UpdateTelemetry()
+	stopChan := make(chan struct{})
+	telemetry.UpdateTelemetry(stopChan)
 
 	go func() {
 		time.Sleep(5 * time.Second) // Wait for topics to accumulate
 		topics := telemetry.GetAvailableTopics()
 		log.Printf("Available topics: %v", topics)
 		telemetry.PrintHashTable()
+		close(stopChan) // Stop the telemetry update
 	}()
 
 	select {}
