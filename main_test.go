@@ -147,8 +147,34 @@ func TestUpdateTelemetry(t *testing.T) {
 	}
 
 	// Ensure the frame is processed
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 	assert.Equal(t, "test_topic", receivedMsg.Topic)
 	assert.Equal(t, TMUint8, receivedMsg.Type)
 	assert.Equal(t, []byte{42}, receivedMsg.Payload)
+}
+
+// TestUpdateTelemetryStopChannel tests the UpdateTelemetry method with a stop channel.
+func TestUpdateTelemetryStopChannel(t *testing.T) {
+	mockTransport := &MockTransport{
+		ReadBuffer: []byte{SOF, 0x01, 0x00, 't', 'e', 's', 't', 0x00, 0x2A, 0x00, 0x00, EOF},
+	}
+	telemetry := NewTelemetry(&TMTransport{
+		Read:  mockTransport.Read,
+		Write: mockTransport.Write,
+	})
+
+	stopChan := make(chan struct{})
+	go telemetry.UpdateTelemetry(stopChan)
+
+	// Allow some time for the telemetry to process
+	time.Sleep(10 * time.Millisecond)
+
+	// Stop the telemetry update
+	close(stopChan)
+
+	// Allow some time for the telemetry to stop
+	time.Sleep(10 * time.Millisecond)
+
+	// Ensure the telemetry has stopped by checking if the read buffer is empty
+	assert.Empty(t, mockTransport.ReadBuffer)
 }

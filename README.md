@@ -41,27 +41,14 @@ package main
 import (
 	"log"
 	"time"
-
-	"github.com/tarm/serial"
 	"path/to/telemetry"
 )
 
 func main() {
-	// Configure the serial port
-	serialConfig := &serial.Config{
-		Name: "COM5",
-		Baud: 115200,
-		ReadTimeout: time.Millisecond * 500,
-	}
-
-	port, err := serial.OpenPort(serialConfig)
+	// Get the transport for the USB device
+	transport, err := telemetry.GetTransport("", "")
 	if err != nil {
-		log.Fatalf("Failed to open serial port: %v", err)
-	}
-
-	transport := &telemetry.TMTransport{
-		Read:  port.Read,
-		Write: port.Write,
+		log.Fatalf("Failed to get USB transport: %v", err)
 	}
 
 	// Initialize telemetry
@@ -83,12 +70,13 @@ func main() {
 	}
 
 	// Start listening for incoming messages
-	tele.UpdateTelemetry()
+	stopChan := make(chan struct{})
+	tele.UpdateTelemetry(stopChan)
 
-	select {} // Keep the program running
+	// Keep the program running
+	select {}
 }
 ```
-
 
 ### Attaching variables to topics
 ```go
@@ -160,9 +148,11 @@ func main() {
     tele.Publish("topic2", telemetry.TMString, []byte("Hello Topic 2"))
 
     // Start listening for incoming messages
-    tele.UpdateTelemetry()
+    stopChan := make(chan struct{})
+    tele.UpdateTelemetry(stopChan)
 
-    select {} // Keep the program running
+    // Keep the program running
+    select {}
 }
 ```
 
@@ -182,7 +172,7 @@ func main() {
 - `Publish(topic string, msgType TMType, payload []byte) error`:
   Sends a message to a topic.
 
-- `UpdateTelemetry()`:
+- `UpdateTelemetry(stopChan chan struct{})`:
   Starts listening for incoming messages.
 
 - `PrintHashTable()`:
