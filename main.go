@@ -23,8 +23,9 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"reflect"
 	"sync"
-	"syscall"
+	"time"
 )
 
 // Telemetry Core
@@ -32,6 +33,8 @@ const (
 	IncomingBufferSize = 128
 	OutgoingBufferSize = 128
 	TopicBufferSize    = 64
+	MaxRetries         = 1000
+	RetryDelay         = 10 * time.Second
 )
 
 type TMType int
@@ -54,20 +57,32 @@ type TMMsg struct {
 }
 
 type TMTransport struct {
-	Read  func([]byte) (int, error)
-	Write func([]byte) (int, error)
+	Read      func([]byte) (int, error)
+	Write     func([]byte) (int, error)
+	ProductID string
+	VendorID  string
+	PortName  string
 }
 
+// Telemetry represents the core telemetry system, handling frame parsing, topic-based messaging, and CRC validation.
 type Telemetry struct {
-	Frame           *Frame
-	HashTable       map[string]interface{}
-	TopicCallbacks  map[string]func(TMMsg)
+	// Frame handles the framing protocol for incoming and outgoing messages.
+	Frame *Frame
+	// HashTable stores the values of attached variables by topic.
+	HashTable map[string]interface{}
+	// TopicCallbacks stores the callbacks for specific topics.
+	TopicCallbacks map[string]func(TMMsg)
+	// GeneralCallback is called for any received message if no specific topic callback is registered.
 	GeneralCallback func(TMMsg)
-	Transport       *TMTransport
-	Mutex           sync.Mutex
-	ReceivedTopics  map[string]bool
+	// Transport handles the read and write operations for the telemetry system.
+	Transport *TMTransport
+	// Mutex ensures thread-safe access to the telemetry system's data structures.
+	Mutex sync.Mutex
+	// ReceivedTopics keeps track of all received topics.
+	ReceivedTopics map[string]bool
 }
 
+// NewTelemetry creates a new telemetry instance with the provided transport.
 func NewTelemetry(transport *TMTransport) *Telemetry {
 	t := &Telemetry{
 		Frame:          NewFrame(),
@@ -88,6 +103,7 @@ func NewTelemetry(transport *TMTransport) *Telemetry {
 	return t
 }
 
+// parseFrame parses a received frame into a TMMsg.
 func (t *Telemetry) parseFrame(data []byte) (TMMsg, error) {
 
 	if len(data) < 4 { // Minimum length to include header and topic
@@ -115,6 +131,7 @@ func (t *Telemetry) parseFrame(data []byte) (TMMsg, error) {
 	}, nil
 }
 
+// Attach links a variable to a topic for automatic updates.
 func (t *Telemetry) Attach(topic string, variable interface{}) {
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()
@@ -122,6 +139,7 @@ func (t *Telemetry) Attach(topic string, variable interface{}) {
 	log.Printf("Attached topic: %s", topic)
 }
 
+// Subscribe registers a callback for a specific topic. If the topic is an empty string, the callback is called for any received message.
 func (t *Telemetry) Subscribe(topic string, callback func(TMMsg)) {
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()
@@ -134,6 +152,7 @@ func (t *Telemetry) Subscribe(topic string, callback func(TMMsg)) {
 	log.Printf("Subscribed to topic: %s", topic)
 }
 
+// Publish sends a message to a topic with the specified type and payload.
 func (t *Telemetry) Publish(topic string, msgType TMType, payload []byte) error {
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()
@@ -162,20 +181,27 @@ func (t *Telemetry) Publish(topic string, msgType TMType, payload []byte) error 
 	return nil
 }
 
-func (t *Telemetry) UpdateTelemetry() {
+// UpdateTelemetry starts listening for incoming messages and processes them.
+func (t *Telemetry) UpdateTelemetry(stopChan chan struct{}) {
 	go func() {
 		buffer := make([]byte, IncomingBufferSize)
 		for {
-			n, err := t.Transport.Read(buffer)
-			if err != nil {
-				// Handle interrupted system calls (EINTR)
+			select {
+			case <-stopChan:
+				log.Println("Stopping telemetry update.")
+				return
+			default:
+				n, err := t.Transport.Read(buffer)
+				if err != nil {
+					// Handle interrupted system calls (EINTR)
 				if errors.Is(err, syscall.EINTR) {
 					log.Println("Interrupted system call, retrying...")
 					continue
 				}
 				log.Printf("Error reading from transport: %v", err)
-				continue
-			}
+					t.reconnect()
+					continue
+				}
 
 			// Process the received bytes
 			for i := 0; i < n; i++ {
@@ -185,17 +211,28 @@ func (t *Telemetry) UpdateTelemetry() {
 	}()
 }
 
-func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
+// reconnect attempts to re-establish the USB connection.
+func (t *Telemetry) reconnect() {
+	log.Println("Attempting to reconnect...")
+	for i := 0; i < MaxRetries; i++ {
+		transport, err := GetTransport(t.Transport.VendorID, t.Transport.ProductID)
+		if err == nil {
+			t.Transport = transport
+			log.Printf("Reconnected to USB port: %s", transport.PortName)
+			return
+		}
+		log.Printf("Retrying to reconnect (%d/%d)...", i+1, MaxRetries)
+		time.Sleep(RetryDelay)
+	}
+	log.Println("Failed to reconnect after maximum retries.")
+}
 
+// TryUpdateHashTable updates the hash table with the received message and calls the appropriate callbacks.
+func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()
 
 	t.ReceivedTopics[msg.Topic] = true
-
-	if callback, exists := t.TopicCallbacks[msg.Topic]; exists {
-		callback(msg)
-		return
-	}
 
 	// if the topic is not found in the hash table, insert it
 	if _, ok := t.HashTable[msg.Topic]; !ok {
@@ -221,12 +258,14 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 		}
 	}
 
+	// Check if the value has changed before updating
+	valueChanged := false
 	if variable, ok := t.HashTable[msg.Topic]; ok {
-		switch v := variable.(type) {
+		newValue := reflect.New(reflect.TypeOf(variable).Elem()).Interface()
+		switch v := newValue.(type) {
 		case *float32:
 			if msg.Type == TMFloat32 && len(msg.Payload) == 4 {
-				bits := binary.LittleEndian.Uint32(msg.Payload)
-				*v = math.Float32frombits(bits)
+				*v = math.Float32frombits(binary.LittleEndian.Uint32(msg.Payload))
 			}
 		case *uint8:
 			if msg.Type == TMUint8 && len(msg.Payload) == 1 {
@@ -259,10 +298,21 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 		default:
 			log.Printf("Unknown topic type: %T", v)
 		}
+
+		if !reflect.DeepEqual(variable, newValue) {
+			reflect.ValueOf(variable).Elem().Set(reflect.ValueOf(newValue).Elem())
+			valueChanged = true
+		}
 	}
 
-	// Use general call back after updating hash table so that the user can access the updated values
-	if t.GeneralCallback != nil {
+	// Use specific callback if it exists and value is changed
+	if callback, exists := t.TopicCallbacks[msg.Topic]; valueChanged && exists {
+		callback(msg)
+		return
+	}
+
+	// Use general callback only if the value has changed
+	if valueChanged && t.GeneralCallback != nil {
 		t.GeneralCallback(msg)
 	}
 }
@@ -298,32 +348,29 @@ func (t *Telemetry) GetValue(topic string) interface{} {
 
 // PrintHashTable prints the current values stored in the telemetry's hash table.
 func (t *Telemetry) PrintHashTable() {
-
 	fmt.Println("Current Hash Table Values:")
+	formatMap := map[string]string{
+		"*float32": "%f",
+		"*uint8":   "%d",
+		"*uint16":  "%d",
+		"*uint32":  "%d",
+		"*int8":    "%d",
+		"*int16":   "%d",
+		"*int32":   "%d",
+		"*string":  "%s",
+	}
+
 	for topic, value := range t.HashTable {
-		switch v := value.(type) {
-		case *float32:
-			fmt.Printf("Topic: %s, Value: %f\n", topic, *v)
-		case *uint8:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *uint16:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *uint32:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *int8:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *int16:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *int32:
-			fmt.Printf("Topic: %s, Value: %d\n", topic, *v)
-		case *string:
-			fmt.Printf("Topic: %s, Value: %s\n", topic, *v)
-		default:
+		valueType := fmt.Sprintf("%T", value)
+		if format, ok := formatMap[valueType]; ok {
+			fmt.Printf("Topic: %s, Value: "+format+"\n", topic, reflect.ValueOf(value).Elem())
+		} else {
 			fmt.Printf("Topic: %s, Value: Unknown Type\n", topic)
 		}
 	}
 }
 
+// GetAvailableTopics returns a list of all received topics.
 func (t *Telemetry) GetAvailableTopics() []string {
 	t.Mutex.Lock()
 	defer t.Mutex.Unlock()
@@ -334,43 +381,3 @@ func (t *Telemetry) GetAvailableTopics() []string {
 	}
 	return topics
 }
-
-/*
-func main() {
-
-	port, portDetails, err := GetUSBPort()
-	if err != nil {
-		log.Fatalf("Failed to get USB port: %v", err)
-	}
-
-	log.Printf("USB port found: %s, VID: %s, PID: %s", portDetails.Name, portDetails.VID, portDetails.PID)
-
-	transport := &TMTransport{
-		Read:  port.Read,
-		Write: port.Write,
-	}
-
-	telemetry := NewTelemetry(transport)
-
-	telemetry.Subscribe("", func(msg TMMsg) {
-		//log.Printf("Received topic: %s, value: %v", msg.Topic, telemetry.GetValue(msg.Topic))
-	})
-
-	topic := "hello"
-	// convert value to bytes
-	buf := make([]byte, 2)
-	binary.LittleEndian.PutUint16(buf, 51966)
-	telemetry.Publish(topic, TMUint16, buf)
-
-	telemetry.UpdateTelemetry()
-
-	go func() {
-		time.Sleep(5 * time.Second) // Wait for topics to accumulate
-		topics := telemetry.GetAvailableTopics()
-		log.Printf("Available topics: %v", topics)
-		telemetry.PrintHashTable()
-	}()
-
-	select {}
-}
-*/

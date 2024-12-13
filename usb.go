@@ -19,26 +19,60 @@ package gotelemetry
 import (
 	"errors"
 	"log"
+	"time"
 
 	"github.com/albenik/go-serial"
 	"github.com/albenik/go-serial/enumerator"
 )
 
 const (
-	VendorID  = "0403"
-	ProductID = "6015"
+	VendorID  = "0403" // Default vendor for FTDI devices
+	ProductID = "6015" // Default product for FTDI devices
 )
 
-func GetUSBPort() (serial.Port, *enumerator.PortDetails, error) {
+// GetTransport scans for available USB ports and returns the first one that matches the specified VendorID and ProductID.
+func GetTransport(vendorId string, productId string) (*TMTransport, error) {
+	var serPort serial.Port
+	var portDetails *enumerator.PortDetails
+	var err error
+
+	for i := 0; i < MaxRetries; i++ {
+		serPort, portDetails, err = tryGetUSBPort(vendorId, productId)
+		if err == nil {
+			transport := &TMTransport{
+				Read:      serPort.Read,
+				Write:     serPort.Write,
+				ProductID: portDetails.PID,
+				VendorID:  portDetails.VID,
+				PortName:  portDetails.Name,
+			}
+			return transport, nil
+		}
+		log.Printf("Retrying to get USB port (%d/%d)...", i+1, MaxRetries)
+		time.Sleep(RetryDelay)
+	}
+
+	return nil, err
+}
+
+func tryGetUSBPort(vendorId string, productId string) (serial.Port, *enumerator.PortDetails, error) {
 	ports, err := enumerator.GetDetailedPortsList()
 	if err != nil {
-		log.Fatal(err)
+		return nil, nil, err
 	}
 	if len(ports) == 0 {
 		return nil, nil, errors.New("no serial ports found")
 	}
+
+	if vendorId == "" {
+		vendorId = VendorID
+	}
+	if productId == "" {
+		productId = ProductID
+	}
+
 	for _, port := range ports {
-		if port.IsUSB && port.VID == VendorID && port.PID == ProductID {
+		if port.IsUSB && port.VID == vendorId && port.PID == productId {
 			mode := &serial.Mode{
 				BaudRate: 115200,
 				DataBits: 8,
