@@ -30,8 +30,8 @@ const (
 	ProductID = "6015" // Default product for FTDI devices
 )
 
-// GetUSBPort scans for available USB ports and returns the first one that matches the specified VendorID and ProductID.
-func GetUSBPort(vendorId string, productId string) (serial.Port, *enumerator.PortDetails, error) {
+// GetTransport scans for available USB ports and returns the first one that matches the specified VendorID and ProductID.
+func GetTransport(vendorId string, productId string) (*TMTransport, error) {
 	var serPort serial.Port
 	var portDetails *enumerator.PortDetails
 	var err error
@@ -39,13 +39,20 @@ func GetUSBPort(vendorId string, productId string) (serial.Port, *enumerator.Por
 	for i := 0; i < MaxRetries; i++ {
 		serPort, portDetails, err = tryGetUSBPort(vendorId, productId)
 		if err == nil {
-			return serPort, portDetails, nil
+			transport := &TMTransport{
+				Read:      serPort.Read,
+				Write:     serPort.Write,
+				ProductID: portDetails.PID,
+				VendorID:  portDetails.VID,
+				PortName:  portDetails.Name,
+			}
+			return transport, nil
 		}
 		log.Printf("Retrying to get USB port (%d/%d)...", i+1, MaxRetries)
 		time.Sleep(RetryDelay)
 	}
 
-	return nil, nil, err
+	return nil, err
 }
 
 func tryGetUSBPort(vendorId string, productId string) (serial.Port, *enumerator.PortDetails, error) {

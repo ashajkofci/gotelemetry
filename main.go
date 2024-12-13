@@ -57,8 +57,11 @@ type TMMsg struct {
 }
 
 type TMTransport struct {
-	Read  func([]byte) (int, error)
-	Write func([]byte) (int, error)
+	Read      func([]byte) (int, error)
+	Write     func([]byte) (int, error)
+	ProductID string
+	VendorID  string
+	PortName  string
 }
 
 // Telemetry represents the core telemetry system, handling frame parsing, topic-based messaging, and CRC validation.
@@ -77,21 +80,16 @@ type Telemetry struct {
 	Mutex sync.Mutex
 	// ReceivedTopics keeps track of all received topics.
 	ReceivedTopics map[string]bool
-	// VendorID and ProductID for reconnection purposes.
-	VendorID  string
-	ProductID string
 }
 
 // NewTelemetry creates a new telemetry instance with the provided transport.
-func NewTelemetry(transport *TMTransport, vendorId, productId string) *Telemetry {
+func NewTelemetry(transport *TMTransport) *Telemetry {
 	t := &Telemetry{
 		Frame:          NewFrame(),
 		HashTable:      make(map[string]interface{}),
 		TopicCallbacks: make(map[string]func(TMMsg)),
 		Transport:      transport,
 		ReceivedTopics: make(map[string]bool),
-		VendorID:       vendorId,
-		ProductID:      productId,
 	}
 	t.Frame.OnFrame = func(data []byte) {
 		msg, err := t.parseFrame(data)
@@ -212,13 +210,10 @@ func (t *Telemetry) UpdateTelemetry(stopChan chan struct{}) {
 func (t *Telemetry) reconnect() {
 	log.Println("Attempting to reconnect...")
 	for i := 0; i < MaxRetries; i++ {
-		port, portDetails, err := GetUSBPort(t.VendorID, t.ProductID)
+		transport, err := GetTransport(t.Transport.VendorID, t.Transport.ProductID)
 		if err == nil {
-			t.Transport = &TMTransport{
-				Read:  port.Read,
-				Write: port.Write,
-			}
-			log.Printf("Reconnected to USB port: %s", portDetails.Name)
+			t.Transport = transport
+			log.Printf("Reconnected to USB port: %s", transport.PortName)
 			return
 		}
 		log.Printf("Retrying to reconnect (%d/%d)...", i+1, MaxRetries)
