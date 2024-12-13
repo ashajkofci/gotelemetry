@@ -45,7 +45,7 @@ func TestNewTelemetry(t *testing.T) {
 	telemetry := NewTelemetry(&TMTransport{
 		Read:  mockTransport.Read,
 		Write: mockTransport.Write,
-	})
+	}, "0403", "6015")
 
 	assert.NotNil(t, telemetry)
 	assert.NotNil(t, telemetry.Frame)
@@ -53,6 +53,8 @@ func TestNewTelemetry(t *testing.T) {
 	assert.NotNil(t, telemetry.TopicCallbacks)
 	assert.NotNil(t, telemetry.Transport)
 	assert.NotNil(t, telemetry.ReceivedTopics)
+	assert.Equal(t, "0403", telemetry.VendorID)
+	assert.Equal(t, "6015", telemetry.ProductID)
 }
 
 // TestPublish tests the Publish method of the Telemetry struct.
@@ -61,7 +63,7 @@ func TestPublish(t *testing.T) {
 	telemetry := NewTelemetry(&TMTransport{
 		Read:  mockTransport.Read,
 		Write: mockTransport.Write,
-	})
+	}, "0403", "6015")
 
 	err := telemetry.Publish("test_topic", TMUint8, []byte{42})
 	assert.Nil(t, err)
@@ -74,7 +76,7 @@ func TestSubscribe(t *testing.T) {
 	telemetry := NewTelemetry(&TMTransport{
 		Read:  mockTransport.Read,
 		Write: mockTransport.Write,
-	})
+	}, "0403", "6015")
 
 	var receivedMsg TMMsg
 	telemetry.Subscribe("test_topic", func(msg TMMsg) {
@@ -98,7 +100,7 @@ func TestAttach(t *testing.T) {
 	telemetry := NewTelemetry(&TMTransport{
 		Read:  mockTransport.Read,
 		Write: mockTransport.Write,
-	})
+	}, "0403", "6015")
 
 	var value uint8
 	telemetry.Attach("test_topic", &value)
@@ -130,7 +132,7 @@ func TestUpdateTelemetry(t *testing.T) {
 	telemetry := NewTelemetry(&TMTransport{
 		Read:  mockTransport.Read,
 		Write: mockTransport.Write,
-	})
+	}, "0403", "6015")
 
 	var receivedMsg TMMsg
 	telemetry.Subscribe("test_topic", func(msg TMMsg) {

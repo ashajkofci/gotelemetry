@@ -25,6 +25,7 @@ import (
 	"math"
 	"reflect"
 	"sync"
+	"time"
 )
 
 // Telemetry Core
@@ -32,6 +33,8 @@ const (
 	IncomingBufferSize = 128
 	OutgoingBufferSize = 128
 	TopicBufferSize    = 64
+	MaxRetries         = 1000
+	RetryDelay         = 10 * time.Second
 )
 
 type TMType int
@@ -74,16 +77,21 @@ type Telemetry struct {
 	Mutex sync.Mutex
 	// ReceivedTopics keeps track of all received topics.
 	ReceivedTopics map[string]bool
+	// VendorID and ProductID for reconnection purposes.
+	VendorID  string
+	ProductID string
 }
 
 // NewTelemetry creates a new telemetry instance with the provided transport.
-func NewTelemetry(transport *TMTransport) *Telemetry {
+func NewTelemetry(transport *TMTransport, vendorId, productId string) *Telemetry {
 	t := &Telemetry{
 		Frame:          NewFrame(),
 		HashTable:      make(map[string]interface{}),
 		TopicCallbacks: make(map[string]func(TMMsg)),
 		Transport:      transport,
 		ReceivedTopics: make(map[string]bool),
+		VendorID:       vendorId,
+		ProductID:      productId,
 	}
 	t.Frame.OnFrame = func(data []byte) {
 		msg, err := t.parseFrame(data)
@@ -188,6 +196,7 @@ func (t *Telemetry) UpdateTelemetry(stopChan chan struct{}) {
 				n, err := t.Transport.Read(buffer)
 				if err != nil {
 					log.Printf("Error reading from transport: %v", err)
+					t.reconnect()
 					continue
 				}
 
@@ -197,6 +206,25 @@ func (t *Telemetry) UpdateTelemetry(stopChan chan struct{}) {
 			}
 		}
 	}()
+}
+
+// reconnect attempts to re-establish the USB connection.
+func (t *Telemetry) reconnect() {
+	log.Println("Attempting to reconnect...")
+	for i := 0; i < MaxRetries; i++ {
+		port, portDetails, err := GetUSBPort(t.VendorID, t.ProductID)
+		if err == nil {
+			t.Transport = &TMTransport{
+				Read:  port.Read,
+				Write: port.Write,
+			}
+			log.Printf("Reconnected to USB port: %s", portDetails.Name)
+			return
+		}
+		log.Printf("Retrying to reconnect (%d/%d)...", i+1, MaxRetries)
+		time.Sleep(RetryDelay)
+	}
+	log.Println("Failed to reconnect after maximum retries.")
 }
 
 // TryUpdateHashTable updates the hash table with the received message and calls the appropriate callbacks.

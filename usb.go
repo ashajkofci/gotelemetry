@@ -19,6 +19,7 @@ package gotelemetry
 import (
 	"errors"
 	"log"
+	"time"
 
 	"github.com/albenik/go-serial"
 	"github.com/albenik/go-serial/enumerator"
@@ -31,9 +32,26 @@ const (
 
 // GetUSBPort scans for available USB ports and returns the first one that matches the specified VendorID and ProductID.
 func GetUSBPort(vendorId string, productId string) (serial.Port, *enumerator.PortDetails, error) {
+	var serPort serial.Port
+	var portDetails *enumerator.PortDetails
+	var err error
+
+	for i := 0; i < MaxRetries; i++ {
+		serPort, portDetails, err = tryGetUSBPort(vendorId, productId)
+		if err == nil {
+			return serPort, portDetails, nil
+		}
+		log.Printf("Retrying to get USB port (%d/%d)...", i+1, MaxRetries)
+		time.Sleep(RetryDelay)
+	}
+
+	return nil, nil, err
+}
+
+func tryGetUSBPort(vendorId string, productId string) (serial.Port, *enumerator.PortDetails, error) {
 	ports, err := enumerator.GetDetailedPortsList()
 	if err != nil {
-		log.Fatal(err)
+		return nil, nil, err
 	}
 	if len(ports) == 0 {
 		return nil, nil, errors.New("no serial ports found")
