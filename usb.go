@@ -21,8 +21,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/albenik/go-serial"
-	"github.com/albenik/go-serial/enumerator"
+	"github.com/albenik/go-serial/v2"
+	"github.com/albenik/go-serial/v2/enumerator"
 )
 
 const (
@@ -32,7 +32,7 @@ const (
 
 // GetTransport scans for available USB ports and returns the first one that matches the specified VendorID and ProductID.
 func GetTransport(vendorId string, productId string) (*TMTransport, error) {
-	var serPort serial.Port
+	var serPort *serial.Port
 	var portDetails *enumerator.PortDetails
 	var err error
 
@@ -55,7 +55,7 @@ func GetTransport(vendorId string, productId string) (*TMTransport, error) {
 	return nil, err
 }
 
-func tryGetUSBPort(vendorId string, productId string) (serial.Port, *enumerator.PortDetails, error) {
+func tryGetUSBPort(vendorId string, productId string) (*serial.Port, *enumerator.PortDetails, error) {
 	ports, err := enumerator.GetDetailedPortsList()
 	if err != nil {
 		return nil, nil, err
@@ -73,13 +73,7 @@ func tryGetUSBPort(vendorId string, productId string) (serial.Port, *enumerator.
 
 	for _, port := range ports {
 		if port.IsUSB && port.VID == vendorId && port.PID == productId {
-			mode := &serial.Mode{
-				BaudRate: 115200,
-				DataBits: 8,
-				Parity:   serial.NoParity,
-				StopBits: serial.OneStopBit,
-			}
-			serPort, err := serial.Open(port.Name, mode)
+			serPort, err := serial.Open(port.Name, serial.WithBaudrate(115200), serial.WithDataBits(8), serial.WithParity(serial.NoParity), serial.WithStopBits(serial.OneStopBit))
 			serPort.SetReadTimeout(1000)
 			if err != nil {
 				return nil, port, err
