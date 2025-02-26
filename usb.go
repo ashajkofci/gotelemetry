@@ -40,11 +40,14 @@ func GetTransport(vendorId string, productId string) (*TMTransport, error) {
 		serPort, portDetails, err = tryGetUSBPort(vendorId, productId)
 		if err == nil {
 			transport := &TMTransport{
-				Read:      serPort.Read,
-				Write:     serPort.Write,
-				ProductID: portDetails.PID,
-				VendorID:  portDetails.VID,
-				PortName:  portDetails.Name,
+				Read:         serPort.Read,
+				Write:        serPort.Write,
+				ProductID:    portDetails.PID,
+				VendorID:     portDetails.VID,
+				PortName:     portDetails.Name,
+				Manufacturer: portDetails.Manufacturer,
+				Product:      portDetails.Product,
+				SerialNumber: portDetails.SerialNumber,
 			}
 			return transport, nil
 		}

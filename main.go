@@ -25,6 +25,7 @@ import (
 	"math"
 	"reflect"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -57,11 +58,14 @@ type TMMsg struct {
 }
 
 type TMTransport struct {
-	Read      func([]byte) (int, error)
-	Write     func([]byte) (int, error)
-	ProductID string
-	VendorID  string
-	PortName  string
+	Read         func([]byte) (int, error)
+	Write        func([]byte) (int, error)
+	ProductID    string
+	VendorID     string
+	Manufacturer string
+	Product      string
+	SerialNumber string
+	PortName     string
 }
 
 // Telemetry represents the core telemetry system, handling frame parsing, topic-based messaging, and CRC validation.
@@ -194,18 +198,19 @@ func (t *Telemetry) UpdateTelemetry(stopChan chan struct{}) {
 				n, err := t.Transport.Read(buffer)
 				if err != nil {
 					// Handle interrupted system calls (EINTR)
-				if errors.Is(err, syscall.EINTR) {
-					log.Println("Interrupted system call, retrying...")
-					continue
-				}
-				log.Printf("Error reading from transport: %v", err)
+					if errors.Is(err, syscall.EINTR) {
+						log.Println("Interrupted system call, retrying...")
+						continue
+					}
+					log.Printf("Error reading from transport: %v", err)
 					t.reconnect()
 					continue
 				}
 
-			// Process the received bytes
-			for i := 0; i < n; i++ {
-				t.Frame.FeedByte(buffer[i])
+				// Process the received bytes
+				for i := 0; i < n; i++ {
+					t.Frame.FeedByte(buffer[i])
+				}
 			}
 		}
 	}()
