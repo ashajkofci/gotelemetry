@@ -178,6 +178,12 @@ func main() {
 - `PrintHashTable()`:
   Prints the current values in the hash table.
 
+- `GetValue(topic string) interface{}`:
+  Returns the value of a topic in the hash table.
+
+- `GetAvailableTopics() []string`:
+  Returns a list of all received topics.
+
 ### Message Types (`TMType`)
 
 | Type       | Description     |

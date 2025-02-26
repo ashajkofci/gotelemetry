@@ -25,7 +25,6 @@ import (
 	"math"
 	"reflect"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -197,17 +196,11 @@ func (t *Telemetry) UpdateTelemetry(stopChan chan struct{}) {
 			default:
 				n, err := t.Transport.Read(buffer)
 				if err != nil {
-					// Handle interrupted system calls (EINTR)
-					if errors.Is(err, syscall.EINTR) {
-						log.Println("Interrupted system call, retrying...")
-						continue
-					}
 					log.Printf("Error reading from transport: %v", err)
 					t.reconnect()
 					continue
 				}
 
-				// Process the received bytes
 				for i := 0; i < n; i++ {
 					t.Frame.FeedByte(buffer[i])
 				}
