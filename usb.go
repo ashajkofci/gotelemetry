@@ -31,12 +31,44 @@ const (
 )
 
 // GetTransport scans for available USB ports and returns the first one that matches the specified VendorID and ProductID.
-func GetTransport(vendorId string, productId string) (*TMTransport, error) {
+// All parameters are optional:
+// - vendorId (default: VendorID constant "0403")
+// - productId (default: ProductID constant "6015")
+// - maxRetries (default: MaxRetries variable)
+// - retryDelay (default: RetryDelay variable)
+func GetTransport(options ...interface{}) (*TMTransport, error) {
 	var serPort *serial.Port
 	var portDetails *enumerator.PortDetails
 	var err error
 
-	for i := 0; i < MaxRetries; i++ {
+	// Parse optional parameters with defaults
+	vendorId := VendorID
+	productId := ProductID
+	maxRetries := MaxRetries
+	retryDelay := RetryDelay
+
+	for i, option := range options {
+		switch i {
+		case 0:
+			if v, ok := option.(string); ok {
+				vendorId = v
+			}
+		case 1:
+			if v, ok := option.(string); ok {
+				productId = v
+			}
+		case 2:
+			if v, ok := option.(int); ok {
+				maxRetries = v
+			}
+		case 3:
+			if v, ok := option.(time.Duration); ok {
+				retryDelay = v
+			}
+		}
+	}
+
+	for i := 0; i < maxRetries; i++ {
 		serPort, portDetails, err = tryGetUSBPort(vendorId, productId)
 		if err == nil {
 			transport := &TMTransport{
@@ -51,8 +83,8 @@ func GetTransport(vendorId string, productId string) (*TMTransport, error) {
 			}
 			return transport, nil
 		}
-		log.Printf("Retrying to get USB port (%d/%d)...", i+1, MaxRetries)
-		time.Sleep(RetryDelay)
+		log.Printf("Retrying to get USB port (%d/%d)...", i+1, maxRetries)
+		time.Sleep(retryDelay)
 	}
 
 	return nil, err

@@ -33,8 +33,11 @@ const (
 	IncomingBufferSize = 128
 	OutgoingBufferSize = 128
 	TopicBufferSize    = 64
-	MaxRetries         = 1000
-	RetryDelay         = 10 * time.Second
+)
+
+var (
+	MaxRetries = 1000             // Maximum number of retries for connections
+	RetryDelay = 10 * time.Second // Delay between retry attempts
 )
 
 type TMType int
