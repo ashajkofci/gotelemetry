@@ -222,3 +222,117 @@ func TestGeneralCallbackOnHashTableChange(t *testing.T) {
 	})
 	assert.True(t, callbackTriggered)
 }
+
+// TestZeroValueIssue demonstrates the issue where zero values don't trigger callbacks.
+func TestZeroValueIssue(t *testing.T) {
+	mockTransport := &MockTransport{}
+	telemetry := NewTelemetry(&TMTransport{
+		Read:  mockTransport.Read,
+		Write: mockTransport.Write,
+	})
+
+	var callbackTriggered bool
+	telemetry.GeneralCallback = func(msg TMMsg) {
+		callbackTriggered = true
+	}
+
+	// Don't attach a variable first - let TryUpdateHashTable create it
+	// This simulates receiving a message for a topic that doesn't exist yet
+	
+	// Publishing a zero value should trigger the callback for a new topic
+	telemetry.TryUpdateHashTable(TMMsg{
+		Type:    TMUint8,
+		Topic:   "test_topic",
+		Payload: []byte{0}, // Zero value
+	})
+	
+	// This should be true - first message for a topic should always trigger callback
+	assert.True(t, callbackTriggered, "Callback should be triggered when receiving first message for topic, even if zero value")
+
+	// Reset and test with attached variable
+	callbackTriggered = false
+	
+	var value uint8 = 5 // Start with non-zero value
+	telemetry.Attach("attached_topic", &value)
+
+	// Change to zero - this should trigger callback
+	telemetry.TryUpdateHashTable(TMMsg{
+		Type:    TMUint8,
+		Topic:   "attached_topic", 
+		Payload: []byte{0}, // Zero value
+	})
+	
+	assert.True(t, callbackTriggered, "Callback should be triggered when value changes to zero")
+	assert.Equal(t, uint8(0), value, "Variable should be updated to zero")
+}
+
+// TestZeroValueEdgeCases tests various edge cases with zero values
+func TestZeroValueEdgeCases(t *testing.T) {
+	mockTransport := &MockTransport{}
+	telemetry := NewTelemetry(&TMTransport{
+		Read:  mockTransport.Read,
+		Write: mockTransport.Write,
+	})
+
+	var callbackCount int
+	telemetry.GeneralCallback = func(msg TMMsg) {
+		callbackCount++
+	}
+
+	// Test 1: Variable starts at 0, receives 0 (should NOT trigger callback - no change)
+	var value1 uint8 = 0
+	telemetry.Attach("topic1", &value1)
+	
+	telemetry.TryUpdateHashTable(TMMsg{
+		Type:    TMUint8,
+		Topic:   "topic1",
+		Payload: []byte{0},
+	})
+	assert.Equal(t, 0, callbackCount, "No callback should be triggered when value remains 0")
+	
+	// Test 2: Variable starts at 0, receives 5 (should trigger callback - value changed)
+	telemetry.TryUpdateHashTable(TMMsg{
+		Type:    TMUint8,
+		Topic:   "topic1", 
+		Payload: []byte{5},
+	})
+	assert.Equal(t, 1, callbackCount, "Callback should be triggered when value changes from 0 to 5")
+	
+	// Test 3: Variable is at 5, receives 0 (should trigger callback - value changed)
+	telemetry.TryUpdateHashTable(TMMsg{
+		Type:    TMUint8,
+		Topic:   "topic1",
+		Payload: []byte{0},
+	})
+	assert.Equal(t, 2, callbackCount, "Callback should be triggered when value changes from 5 to 0")
+	
+	// Test 4: New topic with zero value (should trigger callback - new topic)
+	telemetry.TryUpdateHashTable(TMMsg{
+		Type:    TMUint16,
+		Topic:   "new_topic",
+		Payload: []byte{0, 0}, // uint16 zero
+	})
+	assert.Equal(t, 3, callbackCount, "Callback should be triggered for new topic with zero value")
+}
+
+// TestPublishZeroValues tests publishing zero values through the full pipeline
+func TestPublishZeroValues(t *testing.T) {
+	mockTransport := &MockTransport{}
+	telemetry := NewTelemetry(&TMTransport{
+		Read:  mockTransport.Read,
+		Write: mockTransport.Write,
+	})
+
+	// Test publishing zero values of different types
+	err := telemetry.Publish("uint8_topic", TMUint8, []byte{0})
+	assert.Nil(t, err, "Should be able to publish uint8 zero value")
+
+	err = telemetry.Publish("uint16_topic", TMUint16, []byte{0, 0})
+	assert.Nil(t, err, "Should be able to publish uint16 zero value")
+
+	err = telemetry.Publish("float32_topic", TMFloat32, []byte{0, 0, 0, 0})
+	assert.Nil(t, err, "Should be able to publish float32 zero value")
+
+	// Verify the data was written to the transport
+	assert.NotEmpty(t, mockTransport.WriteBuffer, "Data should be written to transport")
+}

@@ -235,8 +235,10 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 
 	t.ReceivedTopics[msg.Topic] = true
 
-	// if the topic is not found in the hash table, insert it
+	// Check if this is a new topic
+	isNewTopic := false
 	if _, ok := t.HashTable[msg.Topic]; !ok {
+		isNewTopic = true
 		switch msg.Type {
 		case TMFloat32:
 			t.HashTable[msg.Topic] = new(float32)
@@ -306,14 +308,17 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 		}
 	}
 
-	// Use specific callback if it exists and value is changed
-	if callback, exists := t.TopicCallbacks[msg.Topic]; valueChanged && exists {
+	// If this is a new topic or the value has changed, trigger callbacks
+	shouldTriggerCallback := isNewTopic || valueChanged
+
+	// Use specific callback if it exists
+	if callback, exists := t.TopicCallbacks[msg.Topic]; shouldTriggerCallback && exists {
 		callback(msg)
 		return
 	}
 
-	// Use general callback only if the value has changed
-	if valueChanged && t.GeneralCallback != nil {
+	// Use general callback
+	if shouldTriggerCallback && t.GeneralCallback != nil {
 		t.GeneralCallback(msg)
 	}
 }
