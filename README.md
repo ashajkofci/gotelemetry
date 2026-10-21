@@ -70,7 +70,10 @@ reject the device. Without `Identify`, the first valid message connects it.
 Callbacks are synchronous and should return promptly.
 
 Set `Product` to only open adapters whose USB product string descriptor
-matches (case-insensitive), and `SerialNumber` to select a particular adapter. When several adapters still match, the most
+matches (case-insensitive). A trailing `%` matches a product prefix, so
+`Accessory.%` accepts both `Accessory.02` and `Accessory.03`. Selectors without
+`%` continue to match exactly. Set `SerialNumber` to select a particular adapter.
+When several adapters still match, the most
 recently attached one is used. Port renumbering is handled on discovery.
 Timeouts and retry delays are configurable in `USBTelemetrySourceOptions`.
 

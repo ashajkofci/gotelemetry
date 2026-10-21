@@ -47,7 +47,7 @@ type USBTelemetrySourceOptions struct {
 	VendorID              string
 	ProductID             string
 	SerialNumber          string // Optional selector when adapters share VID/PID.
-	Product               string // Optional USB product string selector.
+	Product               string // Optional USB product string selector; a trailing % matches a prefix.
 	Serial                SerialTransportOptions
 	ConnectionTimeout     time.Duration // Includes opening and identifying.
 	ReconnectInitialDelay time.Duration
@@ -403,6 +403,17 @@ func (m *usbSourceSupervisor) scheduleRetry() {
 	}
 }
 
+func matchesUSBProduct(product, selector string) bool {
+	product, selector = strings.TrimSpace(product), strings.TrimSpace(selector)
+	if selector == "" {
+		return true
+	}
+	if prefix, ok := strings.CutSuffix(selector, "%"); ok {
+		return strings.HasPrefix(strings.ToLower(product), strings.ToLower(prefix))
+	}
+	return strings.EqualFold(product, selector)
+}
+
 func (m *usbSourceSupervisor) reconcile() {
 	if m.ctx.Err() != nil {
 		return
@@ -415,13 +426,13 @@ func (m *usbSourceSupervisor) reconcile() {
 		m.scheduleRetry()
 		return
 	}
-	serial, product := m.source.options.SerialNumber, strings.TrimSpace(m.source.options.Product)
+	serial, product := m.source.options.SerialNumber, m.source.options.Product
 	candidates := make([]USBDevice, 0, len(devices))
 	for _, device := range devices {
 		if serial != "" && device.SerialNumber != serial {
 			continue
 		}
-		if product != "" && !strings.EqualFold(strings.TrimSpace(device.Product), product) {
+		if !matchesUSBProduct(device.Product, product) {
 			continue
 		}
 		candidates = append(candidates, device)

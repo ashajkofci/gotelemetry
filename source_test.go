@@ -543,6 +543,43 @@ func TestUSBSourceSelectsLatestDeviceAndHonorsSelectors(t *testing.T) {
 			t.Fatal("adapter without the product string was opened")
 		}
 	})
+	t.Run("product prefix selects the latest matching revision", func(t *testing.T) {
+		older.Product = "Accessory.02"
+		newer.Product = "Accessory.03"
+		other := newer
+		other.Product, other.Attached = "Another accessory", time.Unix(300, 0)
+		f := newUSBSourceFixture(t, older, newer, other)
+		f.service.options.Product = "accessory.%"
+		f.start(t)
+		if f.connect(t, 0).device != newer {
+			t.Fatal("latest device matching the product prefix was not selected")
+		}
+	})
+}
+
+func TestUSBProductMatching(t *testing.T) {
+	for _, tc := range []struct {
+		product  string
+		selector string
+		want     bool
+	}{
+		{"Anything", "", true},
+		{"Accessory.02", "Accessory.02", true},
+		{" Accessory.02\n", " accessory.02 ", true},
+		{"Accessory.03", "Accessory.02", false},
+		{"Accessory.02", "Accessory.%", true},
+		{"Accessory.03", "Accessory.%", true},
+		{" ACCESSORY.03\n", " accessory.% ", true},
+		{"Another accessory", "Accessory.%", false},
+		{"", "Accessory.%", false},
+		{"Accessory.03", "Accessory.*", false},
+	} {
+		t.Run(tc.product+"/"+tc.selector, func(t *testing.T) {
+			if got := matchesUSBProduct(tc.product, tc.selector); got != tc.want {
+				t.Fatalf("matchesUSBProduct(%q, %q) = %t, want %t", tc.product, tc.selector, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestUSBSourceWatcherFailureFallsBackAndRestoresEvents(t *testing.T) {
