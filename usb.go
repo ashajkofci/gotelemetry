@@ -17,13 +17,20 @@ package gotelemetry
  */
 
 import (
+	"context"
 	"errors"
-	"log"
+	"strings"
 	"time"
-
-	"github.com/albenik/go-serial/v2"
-	"github.com/albenik/go-serial/v2/enumerator"
 )
+
+// usbSerialPort describes a serial port provided by a USB device. VendorID and
+// ProductID are lowercase hexadecimal; Attached is zero when unknown.
+type usbSerialPort struct {
+	Name, Path                          string
+	VendorID, ProductID                 string
+	SerialNumber, Manufacturer, Product string
+	Attached                            time.Time
+}
 
 const (
 	VendorID  = "0403" // Default vendor for FTDI devices
@@ -37,84 +44,82 @@ const (
 // - maxRetries (default: MaxRetries variable)
 // - retryDelay (default: RetryDelay variable)
 func GetTransport(options ...interface{}) (*TMTransport, error) {
-	var serPort *serial.Port
-	var portDetails *enumerator.PortDetails
-	var err error
+	return GetTransportContext(context.Background(), options...)
+}
 
+// GetTransportContext performs legacy USB discovery with cancellable retries.
+// A count of one performs a single attempt without a retry delay.
+func GetTransportContext(ctx context.Context, options ...interface{}) (*TMTransport, error) {
 	// Parse optional parameters with defaults
-	vendorId := VendorID
-	productId := ProductID
-	maxRetries := MaxRetries
-	retryDelay := RetryDelay
-
+	vendorID, productID := VendorID, ProductID
+	retries, delay := MaxRetries, RetryDelay
 	for i, option := range options {
 		switch i {
 		case 0:
-			if v, ok := option.(string); ok {
-				vendorId = v
+			if value, ok := option.(string); ok && value != "" {
+				vendorID = value
 			}
 		case 1:
-			if v, ok := option.(string); ok {
-				productId = v
+			if value, ok := option.(string); ok && value != "" {
+				productID = value
 			}
 		case 2:
-			if v, ok := option.(int); ok {
-				maxRetries = v
+			if value, ok := option.(int); ok {
+				retries = value
 			}
 		case 3:
-			if v, ok := option.(time.Duration); ok {
-				retryDelay = v
+			if value, ok := option.(time.Duration); ok {
+				delay = value
 			}
 		}
 	}
-
-	for i := 0; i < maxRetries; i++ {
-		serPort, portDetails, err = tryGetUSBPort(vendorId, productId)
+	if retries < 1 || delay < 0 {
+		return nil, errors.New("retry count must be positive and retry delay nonnegative")
+	}
+	var lastErr error
+	for attempt := 0; attempt < retries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		transport, err := findUSBTransport(vendorID, productID)
 		if err == nil {
-			transport := &TMTransport{
-				Read:         serPort.Read,
-				Write:        serPort.Write,
-				ProductID:    portDetails.PID,
-				VendorID:     portDetails.VID,
-				PortName:     portDetails.Name,
-				Manufacturer: portDetails.Manufacturer,
-				Product:      portDetails.Product,
-				SerialNumber: portDetails.SerialNumber,
+			if ctx.Err() != nil {
+				_ = transport.Close()
+				return nil, ctx.Err()
 			}
 			return transport, nil
 		}
-		log.Printf("Retrying to get USB port (%d/%d)...", i+1, maxRetries)
-		time.Sleep(retryDelay)
-	}
-
-	return nil, err
-}
-
-func tryGetUSBPort(vendorId string, productId string) (*serial.Port, *enumerator.PortDetails, error) {
-	ports, err := enumerator.GetDetailedPortsList()
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(ports) == 0 {
-		return nil, nil, errors.New("no serial ports found")
-	}
-
-	if vendorId == "" {
-		vendorId = VendorID
-	}
-	if productId == "" {
-		productId = ProductID
-	}
-
-	for _, port := range ports {
-		if port.IsUSB && port.VID == vendorId && port.PID == productId {
-			serPort, err := serial.Open(port.Name, serial.WithBaudrate(115200), serial.WithDataBits(8), serial.WithParity(serial.NoParity), serial.WithStopBits(serial.OneStopBit))
-			serPort.SetReadTimeout(1000)
-			if err != nil {
-				return nil, port, err
+		lastErr = err
+		if attempt+1 < retries {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
 			}
-			return serPort, port, nil
 		}
 	}
-	return nil, nil, errors.New("no matching USB port found")
+	return nil, lastErr
+}
+
+func findUSBTransport(vendorID, productID string) (*TMTransport, error) {
+	ports, err := listUSBSerialPorts()
+	if err != nil {
+		return nil, err
+	}
+	for _, port := range ports {
+		if !strings.EqualFold(port.VendorID, vendorID) || !strings.EqualFold(port.ProductID, productID) {
+			continue
+		}
+		transport, err := OpenSerialTransport(port.Name, SerialTransportOptions{BaudRate: 115200})
+		if err != nil {
+			return nil, err
+		}
+		transport.VendorID, transport.ProductID = port.VendorID, port.ProductID
+		transport.SerialNumber = port.SerialNumber
+		transport.Manufacturer, transport.Product = port.Manufacturer, port.Product
+		return transport, nil
+	}
+	return nil, errors.New("no matching USB port found")
 }

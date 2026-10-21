@@ -21,9 +21,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 )
@@ -68,6 +70,8 @@ type TMTransport struct {
 	Product      string
 	SerialNumber string
 	PortName     string
+	// Close releases the transport and joins pending I/O operations.
+	Close func() error
 }
 
 // Telemetry represents the core telemetry system, handling frame parsing, topic-based messaging, and CRC validation.
@@ -86,6 +90,11 @@ type Telemetry struct {
 	Mutex sync.Mutex
 	// ReceivedTopics keeps track of all received topics.
 	ReceivedTopics map[string]bool
+
+	// messageHandler observes all decoded messages without changing subscriptions.
+	messageHandler func(TMMsg)
+	writeMu        sync.Mutex
+	runMu          sync.Mutex
 }
 
 // NewTelemetry creates a new telemetry instance with the provided transport.
@@ -104,6 +113,12 @@ func NewTelemetry(transport *TMTransport) *Telemetry {
 			return
 		}
 		t.TryUpdateHashTable(msg)
+		t.Mutex.Lock()
+		handler := t.messageHandler
+		t.Mutex.Unlock()
+		if handler != nil {
+			handler(msg)
+		}
 	}
 	log.Println("Telemetry system initialized.")
 	return t
@@ -111,30 +126,29 @@ func NewTelemetry(transport *TMTransport) *Telemetry {
 
 // parseFrame parses a received frame into a TMMsg.
 func (t *Telemetry) parseFrame(data []byte) (TMMsg, error) {
-
-	if len(data) < 4 { // Minimum length to include header and topic
+	// Minimum length to include header and topic, plus the CRC.
+	if len(data) < 5 {
 		return TMMsg{}, errors.New("frame too short after unescaping")
 	}
-
-	msgType := binary.LittleEndian.Uint16(data[:2])
-	topicEnd := bytes.IndexByte(data[2:], 0) + 2
-	if topicEnd < 2 {
+	topicEnd := bytes.IndexByte(data[2:len(data)-2], 0)
+	if topicEnd < 0 {
 		return TMMsg{}, errors.New("invalid topic")
 	}
-	topic := string(data[2:topicEnd])
-	payload := data[topicEnd+1 : len(data)-2]
+	topicEnd += 2
 	crcLocal := CRC16(data[:len(data)-2])
 	crcFrame := binary.LittleEndian.Uint16(data[len(data)-2:])
-
 	if crcLocal != crcFrame {
 		return TMMsg{}, fmt.Errorf("CRC mismatch: local=%X frame=%X", crcLocal, crcFrame)
 	}
-
-	return TMMsg{
-		Type:    TMType(msgType),
-		Topic:   topic,
-		Payload: payload,
-	}, nil
+	msg := TMMsg{
+		Type:    TMType(binary.LittleEndian.Uint16(data[:2])),
+		Topic:   string(data[2:topicEnd]),
+		Payload: append([]byte(nil), data[topicEnd+1:len(data)-2]...),
+	}
+	if _, err := msg.Value(); err != nil {
+		return TMMsg{}, err
+	}
+	return msg, nil
 }
 
 // Attach links a variable to a topic for automatic updates.
@@ -160,78 +174,44 @@ func (t *Telemetry) Subscribe(topic string, callback func(TMMsg)) {
 
 // Publish sends a message to a topic with the specified type and payload.
 func (t *Telemetry) Publish(topic string, msgType TMType, payload []byte) error {
-	t.Mutex.Lock()
-	defer t.Mutex.Unlock()
-
-	t.Frame.BeginFrame()
-	head := make([]byte, 2)
-	binary.LittleEndian.PutUint16(head, uint16(msgType))
-	t.Frame.AppendByte(head[0])
-	t.Frame.AppendByte(head[1])
-
-	topicBytes := []byte(topic)
-	t.Frame.OutgoingBuffer = append(t.Frame.OutgoingBuffer, topicBytes...)
-	t.Frame.AppendByte(0)
-
-	t.Frame.OutgoingBuffer = append(t.Frame.OutgoingBuffer, payload...)
-
-	crc := CRC16(t.Frame.OutgoingBuffer[1:])
-	t.Frame.AppendUint16(crc)
-	t.Frame.EndFrame()
-
-	_, err := t.Transport.Write(t.Frame.OutgoingBuffer)
-	if err != nil {
-		log.Printf("Failed to publish topic: %s, error: %v", topic, err)
+	if strings.IndexByte(topic, 0) >= 0 {
+		return errors.New("topic contains a null byte")
+	}
+	if _, err := (TMMsg{Type: msgType, Payload: payload}).Value(); err != nil {
 		return err
 	}
-	return nil
-}
-
-// UpdateTelemetry starts listening for incoming messages and processes them.
-func (t *Telemetry) UpdateTelemetry(stopChan chan struct{}) {
-	go func() {
-		buffer := make([]byte, IncomingBufferSize)
-		for {
-			select {
-			case <-stopChan:
-				log.Println("Stopping telemetry update.")
-				return
-			default:
-				n, err := t.Transport.Read(buffer)
-				if err != nil {
-					log.Printf("Error reading from transport: %v", err)
-					t.reconnect()
-					continue
-				}
-
-				for i := 0; i < n; i++ {
-					t.Frame.FeedByte(buffer[i])
-				}
-			}
-		}
-	}()
-}
-
-// reconnect attempts to re-establish the USB connection.
-func (t *Telemetry) reconnect() {
-	log.Println("Attempting to reconnect...")
-	for i := 0; i < MaxRetries; i++ {
-		transport, err := GetTransport(t.Transport.VendorID, t.Transport.ProductID)
-		if err == nil {
-			t.Transport = transport
-			log.Printf("Reconnected to USB port: %s", transport.PortName)
-			return
-		}
-		log.Printf("Retrying to reconnect (%d/%d)...", i+1, MaxRetries)
-		time.Sleep(RetryDelay)
+	// Sending and receiving use separate frame buffers, so callbacks may publish.
+	data := make([]byte, 2, 2+len(topic)+1+len(payload))
+	binary.LittleEndian.PutUint16(data, uint16(msgType))
+	data = append(data, topic...)
+	data = append(data, 0)
+	data = append(data, payload...)
+	frame := NewFrame()
+	frame.BeginFrame()
+	for _, b := range data {
+		frame.AppendByte(b)
 	}
-	log.Println("Failed to reconnect after maximum retries.")
+	frame.AppendUint16(CRC16(data))
+	frame.EndFrame()
+
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	t.Mutex.Lock()
+	transport := t.Transport
+	t.Mutex.Unlock()
+	if transport == nil || transport.Write == nil {
+		return errors.New("transport has no writer")
+	}
+	n, err := transport.Write(frame.OutgoingBuffer)
+	if err == nil && n != len(frame.OutgoingBuffer) {
+		err = io.ErrShortWrite
+	}
+	return err
 }
 
 // TryUpdateHashTable updates the hash table with the received message and calls the appropriate callbacks.
 func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 	t.Mutex.Lock()
-	defer t.Mutex.Unlock()
 
 	t.ReceivedTopics[msg.Topic] = true
 
@@ -311,20 +291,28 @@ func (t *Telemetry) TryUpdateHashTable(msg TMMsg) {
 	// If this is a new topic or the value has changed, trigger callbacks
 	shouldTriggerCallback := isNewTopic || valueChanged
 
+	// Snapshot callbacks under the mutex, then release it before invoking them.
+	// This preserves routing while allowing callbacks to query or subscribe.
+	callback, exists := t.TopicCallbacks[msg.Topic]
+	generalCallback := t.GeneralCallback
+	t.Mutex.Unlock()
+
 	// Use specific callback if it exists
-	if callback, exists := t.TopicCallbacks[msg.Topic]; shouldTriggerCallback && exists {
+	if shouldTriggerCallback && exists {
 		callback(msg)
 		return
 	}
 
 	// Use general callback
-	if shouldTriggerCallback && t.GeneralCallback != nil {
-		t.GeneralCallback(msg)
+	if shouldTriggerCallback && generalCallback != nil {
+		generalCallback(msg)
 	}
 }
 
 // GetValue returns the value of a topic in the hash table.
 func (t *Telemetry) GetValue(topic string) interface{} {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
 	// if it's a pointer to a variable, return the value
 	if value, ok := t.HashTable[topic]; ok {
 		switch v := value.(type) {
@@ -354,6 +342,8 @@ func (t *Telemetry) GetValue(topic string) interface{} {
 
 // PrintHashTable prints the current values stored in the telemetry's hash table.
 func (t *Telemetry) PrintHashTable() {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
 	fmt.Println("Current Hash Table Values:")
 	formatMap := map[string]string{
 		"*float32": "%f",
@@ -386,4 +376,13 @@ func (t *Telemetry) GetAvailableTopics() []string {
 		topics = append(topics, topic)
 	}
 	return topics
+}
+
+// SetMessageHandler receives every valid decoded message, including unchanged
+// values, after change subscriptions. It does not change Subscribe behavior.
+// Handlers run synchronously outside the mutex and should return promptly.
+func (t *Telemetry) SetMessageHandler(callback func(TMMsg)) {
+	t.Mutex.Lock()
+	defer t.Mutex.Unlock()
+	t.messageHandler = callback
 }

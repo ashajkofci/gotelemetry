@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Hand-written in the shape of `ioreg -a -r -c IOUSBHostDevice -l`: a hub
+	whose subtree contains an FTDI adapter, the same adapter again as its own
+	root, a CDC ACM composite device, and a keyboard without serial ports.
+-->
+<plist version="1.0">
+<array>
+	<dict>
+		<key>Device Speed</key>
+		<integer>2</integer>
+		<key>IOCFPlugInTypes</key>
+		<dict>
+			<key>9dc7b780-9ec0-11d4-a54f-000a27052861</key>
+			<string>IOUSBHostFamily.kext/Contents/PlugIns/IOUSBLib.bundle</string>
+		</dict>
+		<key>IOGeneralInterest</key>
+		<string>IOCommand is not serializable</string>
+		<key>IOObjectClass</key>
+		<string>IOUSBHostDevice</string>
+		<key>IORegistryEntryChildren</key>
+		<array>
+			<dict>
+				<key>IOObjectClass</key>
+				<string>IOUSBHostInterface</string>
+				<key>IORegistryEntryChildren</key>
+				<array>
+					<dict>
+						<key>IOObjectClass</key>
+						<string>AppleUSB20Hub</string>
+						<key>IORegistryEntryChildren</key>
+						<array>
+							<dict>
+								<key>IOObjectClass</key>
+								<string>AppleUSB20HubPort</string>
+								<key>IORegistryEntryChildren</key>
+								<array>
+									<dict>
+										<key>Bus Power Available</key>
+										<integer>250</integer>
+										<key>IOObjectClass</key>
+										<string>IOUSBHostDevice</string>
+										<key>IORegistryEntryChildren</key>
+										<array>
+											<dict>
+												<key>IOObjectClass</key>
+												<string>IOUSBHostInterface</string>
+												<key>IORegistryEntryChildren</key>
+												<array>
+													<dict>
+														<key>IOObjectClass</key>
+														<string>AppleUSBFTDI</string>
+														<key>IORegistryEntryChildren</key>
+														<array>
+															<dict>
+																<key>IOCalloutDevice</key>
+																<string>/dev/cu.usbserial-DK0ABCDE</string>
+																<key>IODialinDevice</key>
+																<string>/dev/tty.usbserial-DK0ABCDE</string>
+																<key>IOObjectClass</key>
+																<string>IOSerialBSDClient</string>
+																<key>IOSerialBSDClientType</key>
+																<string>IORS232SerialStream</string>
+																<key>IOTTYBaseName</key>
+																<string>usbserial-</string>
+																<key>IOTTYSuffix</key>
+																<string>DK0ABCDE</string>
+															</dict>
+														</array>
+													</dict>
+												</array>
+												<key>bInterfaceNumber</key>
+												<integer>0</integer>
+												<key>idProduct</key>
+												<integer>24597</integer>
+												<key>idVendor</key>
+												<integer>1027</integer>
+											</dict>
+										</array>
+										<key>IORegistryEntryID</key>
+										<integer>4294970123</integer>
+										<key>IORegistryEntryName</key>
+										<string>BAC.2360.02</string>
+										<key>USB Address</key>
+										<integer>3</integer>
+										<key>USB Product Name</key>
+										<string>BAC.2360.02</string>
+										<key>USB Serial Number</key>
+										<string>DK0ABCDE</string>
+										<key>USB Vendor Name</key>
+										<string>FTDI</string>
+										<key>UsbDeviceSignature</key>
+										<data>AwQVYAAQREswQUJDREUAAAD//wA=</data>
+										<key>idProduct</key>
+										<integer>24597</integer>
+										<key>idVendor</key>
+										<integer>1027</integer>
+										<key>kUSBProductString</key>
+										<string>BAC.2360.02</string>
+										<key>kUSBSerialNumberString</key>
+										<string>DK0ABCDE</string>
+										<key>kUSBVendorString</key>
+										<string>FTDI</string>
+										<key>locationID</key>
+										<integer>336663552</integer>
+										<key>sessionID</key>
+										<integer>1503482935116</integer>
+									</dict>
+								</array>
+								<key>port</key>
+								<integer>1</integer>
+							</dict>
+						</array>
+					</dict>
+				</array>
+				<key>bInterfaceNumber</key>
+				<integer>0</integer>
+				<key>idProduct</key>
+				<integer>1552</integer>
+				<key>idVendor</key>
+				<integer>1507</integer>
+			</dict>
+		</array>
+		<key>IORegistryEntryID</key>
+		<integer>4294968786</integer>
+		<key>USB Product Name</key>
+		<string>USB2.0 Hub</string>
+		<key>USB Vendor Name</key>
+		<string>GenesysLogic</string>
+		<key>Built-In</key>
+		<false/>
+		<key>idProduct</key>
+		<integer>1552</integer>
+		<key>idVendor</key>
+		<integer>1507</integer>
+		<key>locationID</key>
+		<integer>336592896</integer>
+		<key>sessionID</key>
+		<integer>18446744073709551000</integer>
+	</dict>
+	<dict>
+		<key>Bus Power Available</key>
+		<integer>250</integer>
+		<key>IOObjectClass</key>
+		<string>IOUSBHostDevice</string>
+		<key>IORegistryEntryChildren</key>
+		<array>
+			<dict>
+				<key>IOObjectClass</key>
+				<string>IOUSBHostInterface</string>
+				<key>IORegistryEntryChildren</key>
+				<array>
+					<dict>
+						<key>IOObjectClass</key>
+						<string>AppleUSBFTDI</string>
+						<key>IORegistryEntryChildren</key>
+						<array>
+							<dict>
+								<key>IOCalloutDevice</key>
+								<string>/dev/cu.usbserial-DK0ABCDE</string>
+								<key>IODialinDevice</key>
+								<string>/dev/tty.usbserial-DK0ABCDE</string>
+								<key>IOObjectClass</key>
+								<string>IOSerialBSDClient</string>
+							</dict>
+						</array>
+					</dict>
+				</array>
+				<key>bInterfaceNumber</key>
+				<integer>0</integer>
+				<key>idProduct</key>
+				<integer>24597</integer>
+				<key>idVendor</key>
+				<integer>1027</integer>
+			</dict>
+		</array>
+		<key>IORegistryEntryID</key>
+		<integer>4294970123</integer>
+		<key>USB Product Name</key>
+		<string>BAC.2360.02</string>
+		<key>USB Serial Number</key>
+		<string>DK0ABCDE</string>
+		<key>USB Vendor Name</key>
+		<string>FTDI</string>
+		<key>idProduct</key>
+		<integer>24597</integer>
+		<key>idVendor</key>
+		<integer>1027</integer>
+	</dict>
+	<dict>
+		<key>IOObjectClass</key>
+		<string>IOUSBHostDevice</string>
+		<key>IORegistryEntryChildren</key>
+		<array>
+			<dict>
+				<key>IOObjectClass</key>
+				<string>IOUSBHostInterface</string>
+				<key>IORegistryEntryChildren</key>
+				<array>
+					<dict>
+						<key>IOObjectClass</key>
+						<string>AppleUSBACMControl</string>
+					</dict>
+				</array>
+				<key>bInterfaceNumber</key>
+				<integer>0</integer>
+				<key>idProduct</key>
+				<integer>32822</integer>
+				<key>idVendor</key>
+				<integer>9025</integer>
+			</dict>
+			<dict>
+				<key>IOObjectClass</key>
+				<string>IOUSBHostInterface</string>
+				<key>IORegistryEntryChildren</key>
+				<array>
+					<dict>
+						<key>IOObjectClass</key>
+						<string>AppleUSBACMData</string>
+						<key>IORegistryEntryChildren</key>
+						<array>
+							<dict>
+								<key>IOCalloutDevice</key>
+								<string>/dev/cu.usbmodem14201</string>
+								<key>IODialinDevice</key>
+								<string>/dev/tty.usbmodem14201</string>
+								<key>IOObjectClass</key>
+								<string>IOSerialBSDClient</string>
+							</dict>
+						</array>
+					</dict>
+				</array>
+				<key>bInterfaceNumber</key>
+				<integer>1</integer>
+				<key>idProduct</key>
+				<integer>32822</integer>
+				<key>idVendor</key>
+				<integer>9025</integer>
+			</dict>
+		</array>
+		<key>USB Vendor Name</key>
+		<string>Arduino LLC</string>
+		<key>idProduct</key>
+		<integer>32822</integer>
+		<key>idVendor</key>
+		<integer>9025</integer>
+		<key>kUSBProductString</key>
+		<string>Arduino Leonardo</string>
+		<key>kUSBAddress</key>
+		<real>4.0</real>
+	</dict>
+	<dict>
+		<key>IOObjectClass</key>
+		<string>IOUSBHostDevice</string>
+		<key>IORegistryEntryChildren</key>
+		<array>
+			<dict>
+				<key>IOObjectClass</key>
+				<string>IOUSBHostInterface</string>
+				<key>IORegistryEntryChildren</key>
+				<array>
+					<dict>
+						<key>IOObjectClass</key>
+						<string>AppleUserUSBHostHIDDevice</string>
+						<key>HIDLastActivity</key>
+						<date>2026-10-19T08:00:00Z</date>
+					</dict>
+				</array>
+				<key>bInterfaceNumber</key>
+				<integer>0</integer>
+				<key>idProduct</key>
+				<integer>641</integer>
+				<key>idVendor</key>
+				<integer>1452</integer>
+			</dict>
+		</array>
+		<key>IORegistryEntryID</key>
+		<integer>4294969001</integer>
+		<key>USB Product Name</key>
+		<string>Apple Keyboard</string>
+		<key>idProduct</key>
+		<integer>641</integer>
+		<key>idVendor</key>
+		<integer>1452</integer>
+	</dict>
+</array>
+</plist>

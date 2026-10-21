@@ -10,7 +10,7 @@ This repository provides a Go implementation of a telemetry system based on fram
   - Attach variables to topics.
   - Subscribe to topics with callbacks.
   - Publish messages to topics.
-- **Serial Communication**: Uses `github.com/albenik/go-serial` for serial port interaction.
+- **Serial Communication**: Native serial ports and USB discovery on Linux, Windows and macOS, without cgo.
 
 ## Installation
 
@@ -26,6 +26,121 @@ go build
 ```
 
 ## Usage
+
+### Automatic USB sources
+
+`USBTelemetrySource` owns device discovery, the serial session, health checks,
+and recovery. Applications can embed it in an accessory type and supply their
+own USB identity, serial settings, handshake, identification, and callbacks:
+
+```go
+type Accessory struct {
+    *gotelemetry.USBTelemetrySource
+}
+
+func NewAccessory(vendorID, productID string, onMessage func(gotelemetry.TMMsg)) *Accessory {
+    return &Accessory{gotelemetry.NewUSBTelemetrySource(gotelemetry.USBTelemetrySourceOptions{
+        VendorID: vendorID,
+        ProductID: productID,
+        Serial: gotelemetry.SerialTransportOptions{BaudRate: 115200},
+        OnMessage: onMessage,
+    })}
+}
+```
+
+Call `Start()` to begin detection and `Stop()` to cancel and join all work.
+Both are idempotent. `IsRunning()` reports whether detection is running,
+including while waiting for a device. Separate source instances have independent
+sessions. Lifecycle methods must be called outside source callbacks.
+
+On Linux, the source watches `/dev` before its initial scan, then responds to
+USB serial device changes without periodic scans while waiting normally.
+After a disconnect, failed open, rejected identity, or silent connection, it
+also retries indefinitely with exponential delays from one to thirty seconds.
+Device events bypass that delay. If device events are unavailable, including
+on Windows and macOS, the source polls while no device is connected. A connected
+session is supervised by its health deadline and is never polled.
+
+The default connection timeout is eight seconds. Each valid frame resets the
+health deadline, including an unchanged value. An optional `Handshake` is sent
+after starting the reader; `Identify` can wait for the expected descriptor or
+reject the device. Without `Identify`, the first valid message connects it.
+`OnConnected` runs before replaying identification messages to `OnMessage`.
+`OnDisconnected` also runs at startup with nil and at shutdown with cancellation.
+Callbacks are synchronous and should return promptly.
+
+Set `Product` to only open adapters whose USB product string descriptor
+matches (case-insensitive), and `SerialNumber` to select a particular adapter. When several adapters still match, the most
+recently attached one is used. Port renumbering is handled on discovery.
+Timeouts and retry delays are configurable in `USBTelemetrySourceOptions`.
+
+### Sessions managed by the application
+
+Use `OpenSerialTransport` to open a selected port once, and `Run(ctx)` to
+receive until cancellation or a read error. These APIs do not discover USB
+devices or reconnect; the caller owns those policies. Serial parameters are
+typed options (9600 baud, 8N1, one-second I/O timeouts by default).
+
+```go
+transport, err := gotelemetry.OpenSerialTransport(portName, gotelemetry.SerialTransportOptions{
+    BaudRate: 115200,
+    ReadTimeout: time.Second,
+    WriteTimeout: time.Second,
+})
+if err != nil {
+    return err
+}
+telemetry := gotelemetry.NewTelemetry(transport)
+telemetry.SetMessageHandler(func(msg gotelemetry.TMMsg) {
+    value, _ := msg.Value()
+    log.Printf("%s: %v", msg.Topic, value)
+})
+return telemetry.Run(ctx)
+```
+
+Import `github.com/ashajkofci/gotelemetry` for this example. The port name and serial
+settings belong to the calling application.
+
+`Run` is blocking, returns the transport error or `ctx.Err()`, and closes
+its transport on exit. Cancellation closes it and joins pending reads. Serial I/O uses finite timeouts so closure is synchronized with the serial driver.
+Serial ports are supported natively, without cgo, on:
+
+- **Linux**: ttys of USB devices are found through sysfs, and watched in `/dev`.
+  `OpenSerialTransport` does not lock the port for exclusive use, so other
+  processes can still open it.
+- **Windows**: COM ports of USB devices are found through SetupAPI, including
+  ports created by function drivers such as FTDI's; port names are `COM3` or
+  `\\.\COM10`. Windows serial drivers only allow one open handle per port.
+  Serial numbers come from device instance IDs, which Windows upper-cases, and
+  no manufacturer string is reported.
+- **macOS**: callout devices (`/dev/cu.*`) of USB devices are found with
+  `ioreg`. The port is not locked for exclusive use. Mark and space parity are
+  not supported.
+
+On other platforms `OpenSerialTransport`, `GetTransport` and USB sources return
+an unsupported error; the protocol itself works with any custom `TMTransport`.
+To check a real port, run
+`GOTELEMETRY_TEST_PORT=COM3 go test -run TestSerialTransportHardware`; it only
+reads from the port.
+Custom transports should supply a `Close` function that unblocks reads, or use
+bounded read timeouts. Serial transports returned by `OpenSerialTransport`
+have an idempotent `Close`. Use a new telemetry instance after reconnecting;
+only one reader may run per instance.
+
+`SetMessageHandler` receives every valid message, including repeated values.
+`Subscribe` retains its existing new-or-changed-value behavior: a specific topic
+callback takes precedence over the general callback. A new topic notifies even
+at zero; an attached, unchanged value does not notify. The message handler runs
+after change subscriptions, including when no subscription fires. Both callbacks
+run synchronously outside the data mutex and may call `GetValue`,
+`GetAvailableTopics`, `Subscribe`, and `Publish`. Return promptly and do not
+wait for the reader to exit inside a callback. Retained messages own their payload
+bytes. Invalid CRCs, message types, and payload sizes do not invoke handlers.
+
+The existing `GetTransport` and `UpdateTelemetry` APIs remain available.
+`GetTransportContext(ctx, options...)` adds cancellation to legacy discovery.
+A retry count of one performs one attempt without a sleep. New application
+supervisors should use `Run` to avoid competing reconnect policies.
 
 ### Import the Library
 

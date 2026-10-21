@@ -16,6 +16,7 @@
 package gotelemetry
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -24,17 +25,22 @@ import (
 
 // MockTransport simulates the TMTransport for testing purposes.
 type MockTransport struct {
+	mu          sync.Mutex
 	ReadBuffer  []byte
 	WriteBuffer []byte
 }
 
 func (m *MockTransport) Read(p []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	n := copy(p, m.ReadBuffer)
 	m.ReadBuffer = m.ReadBuffer[n:]
 	return n, nil
 }
 
 func (m *MockTransport) Write(p []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.WriteBuffer = append(m.WriteBuffer, p...)
 	return len(p), nil
 }
@@ -131,23 +137,19 @@ func TestUpdateTelemetry(t *testing.T) {
 		Write: mockTransport.Write,
 	})
 
-	var receivedMsg TMMsg
-	telemetry.Subscribe("test_topic", func(msg TMMsg) {
-		receivedMsg = msg
-	})
+	received := make(chan TMMsg, 1)
+	telemetry.Subscribe("test_topic", func(msg TMMsg) { received <- msg })
 	stopChan := make(chan struct{})
-	telemetry.UpdateTelemetry(stopChan)
-
+	defer close(stopChan)
 	// Simulate reading from the transport
-	buffer := make([]byte, IncomingBufferSize)
-	n, err := mockTransport.Read(buffer)
-	assert.Nil(t, err)
-	for i := 0; i < n; i++ {
-		telemetry.Frame.FeedByte(buffer[i])
-	}
-
+	telemetry.UpdateTelemetry(stopChan)
+	var receivedMsg TMMsg
 	// Ensure the frame is processed
-	time.Sleep(10 * time.Millisecond)
+	select {
+	case receivedMsg = <-received:
+	case <-time.After(time.Second):
+		t.Fatal("legacy reader did not deliver telemetry")
+	}
 	assert.Equal(t, "test_topic", receivedMsg.Topic)
 	assert.Equal(t, TMUint8, receivedMsg.Type)
 	assert.Equal(t, []byte{42}, receivedMsg.Payload)
@@ -175,6 +177,8 @@ func TestUpdateTelemetryStopChannel(t *testing.T) {
 	// Allow some time for the telemetry to stop
 	time.Sleep(10 * time.Millisecond)
 
+	mockTransport.mu.Lock()
+	defer mockTransport.mu.Unlock()
 	// Ensure the telemetry has stopped by checking if the read buffer is empty
 	assert.Empty(t, mockTransport.ReadBuffer)
 }
@@ -238,30 +242,30 @@ func TestZeroValueIssue(t *testing.T) {
 
 	// Don't attach a variable first - let TryUpdateHashTable create it
 	// This simulates receiving a message for a topic that doesn't exist yet
-	
+
 	// Publishing a zero value should trigger the callback for a new topic
 	telemetry.TryUpdateHashTable(TMMsg{
 		Type:    TMUint8,
 		Topic:   "test_topic",
 		Payload: []byte{0}, // Zero value
 	})
-	
+
 	// This should be true - first message for a topic should always trigger callback
 	assert.True(t, callbackTriggered, "Callback should be triggered when receiving first message for topic, even if zero value")
 
 	// Reset and test with attached variable
 	callbackTriggered = false
-	
+
 	var value uint8 = 5 // Start with non-zero value
 	telemetry.Attach("attached_topic", &value)
 
 	// Change to zero - this should trigger callback
 	telemetry.TryUpdateHashTable(TMMsg{
 		Type:    TMUint8,
-		Topic:   "attached_topic", 
+		Topic:   "attached_topic",
 		Payload: []byte{0}, // Zero value
 	})
-	
+
 	assert.True(t, callbackTriggered, "Callback should be triggered when value changes to zero")
 	assert.Equal(t, uint8(0), value, "Variable should be updated to zero")
 }
@@ -282,22 +286,22 @@ func TestZeroValueEdgeCases(t *testing.T) {
 	// Test 1: Variable starts at 0, receives 0 (should NOT trigger callback - no change)
 	var value1 uint8 = 0
 	telemetry.Attach("topic1", &value1)
-	
+
 	telemetry.TryUpdateHashTable(TMMsg{
 		Type:    TMUint8,
 		Topic:   "topic1",
 		Payload: []byte{0},
 	})
 	assert.Equal(t, 0, callbackCount, "No callback should be triggered when value remains 0")
-	
+
 	// Test 2: Variable starts at 0, receives 5 (should trigger callback - value changed)
 	telemetry.TryUpdateHashTable(TMMsg{
 		Type:    TMUint8,
-		Topic:   "topic1", 
+		Topic:   "topic1",
 		Payload: []byte{5},
 	})
 	assert.Equal(t, 1, callbackCount, "Callback should be triggered when value changes from 0 to 5")
-	
+
 	// Test 3: Variable is at 5, receives 0 (should trigger callback - value changed)
 	telemetry.TryUpdateHashTable(TMMsg{
 		Type:    TMUint8,
@@ -305,7 +309,7 @@ func TestZeroValueEdgeCases(t *testing.T) {
 		Payload: []byte{0},
 	})
 	assert.Equal(t, 2, callbackCount, "Callback should be triggered when value changes from 5 to 0")
-	
+
 	// Test 4: New topic with zero value (should trigger callback - new topic)
 	telemetry.TryUpdateHashTable(TMMsg{
 		Type:    TMUint16,
