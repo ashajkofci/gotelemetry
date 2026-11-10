@@ -35,6 +35,17 @@ func TestUSBSourceSessionRunsCallerHandshakeAndRepeatedTelemetry(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("session did not publish caller's handshake")
 	}
+	if err := session.publish("valve_command", TMUint8, []byte{3}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-hello:
+		if msg.Topic != "valve_command" || msg.Type != TMUint8 || !reflect.DeepEqual(msg.Payload, []byte{3}) {
+			t.Fatalf("command=%+v", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("command was not delivered")
+	}
 	for i := 0; i < 2; i++ {
 		if err := remote.Publish("reading", TMUint8, []byte{0}); err != nil {
 			t.Fatal(err)

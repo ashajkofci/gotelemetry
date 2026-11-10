@@ -65,7 +65,7 @@ func newUSBSourceSession(ctx context.Context, device USBDevice, transport *TMTra
 		defer close(stopped)
 		done <- telemetry.Run(sessionCtx)
 	}()
-	session := &usbSourceSession{device: device, messages: messages, done: done, close: func() {
+	session := &usbSourceSession{device: device, messages: messages, done: done, publish: telemetry.Publish, close: func() {
 		cancel()
 		<-stopped
 	}}

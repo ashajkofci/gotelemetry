@@ -119,6 +119,7 @@ type usbSourceFakeSession struct {
 	closes   atomic.Int32
 	once     sync.Once
 	device   USBDevice
+	publish  func(string, TMType, []byte) error
 }
 
 func newUSBSourceFakeSession(ctx context.Context, device USBDevice) *usbSourceFakeSession {
@@ -140,7 +141,7 @@ func (s *usbSourceFakeSession) finish(err error) {
 	s.once.Do(func() { s.closes.Add(1); close(s.closed); s.done <- err })
 }
 func (s *usbSourceFakeSession) session() *usbSourceSession {
-	return &usbSourceSession{device: s.device, messages: s.messages, done: s.done, close: func() {
+	return &usbSourceSession{device: s.device, messages: s.messages, done: s.done, publish: s.publish, close: func() {
 		s.finish(context.Canceled)
 		<-s.joined
 	}}
@@ -685,5 +686,72 @@ func TestUSBSourceConcurrentStartStop(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("concurrent lifecycle calls deadlocked")
+	}
+}
+
+func TestUSBSourcePublishLifecycle(t *testing.T) {
+	f := newUSBSourceFixture(t, usbSourceTestDevice)
+	var writes atomic.Int32
+	fail := atomic.Bool{}
+	f.openFn = func(ctx context.Context, d USBDevice) (*usbSourceSession, error) {
+		session := newUSBSourceFakeSession(ctx, d)
+		session.publish = func(topic string, kind TMType, payload []byte) error {
+			if topic != "valve_command" || kind != TMUint8 || len(payload) != 1 || payload[0] != 3 {
+				t.Error("wrong command")
+			}
+			writes.Add(1)
+			if fail.Load() {
+				return errors.New("write failed")
+			}
+			return nil
+		}
+		f.mu.Lock()
+		f.sessions = append(f.sessions, session)
+		f.mu.Unlock()
+		return session.session(), nil
+	}
+	msg := TMMsg{Topic: "valve_command", Type: TMUint8, Payload: []byte{3}}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := f.service.Publish(ctx, msg); err == nil {
+		t.Fatal("stopped source accepted command")
+	}
+	f.start(t)
+	if err := f.service.Publish(ctx, msg); err == nil {
+		t.Fatal("unidentified source accepted command")
+	}
+	f.connect(t, 0)
+	canceled, stop := context.WithCancel(ctx)
+	stop()
+	if err := f.service.Publish(canceled, msg); err == nil {
+		t.Fatal("canceled command accepted")
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := f.service.Publish(ctx, msg); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if writes.Load() != 10 {
+		t.Fatalf("writes=%d", writes.Load())
+	}
+	if f.status.get("connected") != "1" {
+		t.Fatal("commands disconnected source")
+	}
+	fail.Store(true)
+	if err := f.service.Publish(ctx, msg); err == nil {
+		t.Fatal("write error lost")
+	}
+	usbSourceAwait(t, func() bool { return f.status.get("connected") == "0" })
+	if writes.Load() != 11 {
+		t.Fatal("failed write was retried")
+	}
+	if err := f.service.Publish(ctx, msg); err == nil {
+		t.Fatal("disconnected source accepted command")
 	}
 }

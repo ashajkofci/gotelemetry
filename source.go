@@ -73,12 +73,13 @@ type USBTelemetrySourceOptions struct {
 // Options are copied at construction. Callbacks run synchronously on the
 // supervisor; return promptly and do not call lifecycle methods from them.
 type USBTelemetrySource struct {
-	options USBTelemetrySourceOptions
-	backend usbSourceBackend
-	clock   usbSourceClock
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	done    chan struct{}
+	options  USBTelemetrySourceOptions
+	backend  usbSourceBackend
+	clock    usbSourceClock
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	done     chan struct{}
+	commands chan usbSourceCommand
 }
 
 func NewUSBTelemetrySource(options USBTelemetrySourceOptions) *USBTelemetrySource {
@@ -124,11 +125,54 @@ func (s *USBTelemetrySource) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.cancel, s.done = cancel, done
+	s.commands = make(chan usbSourceCommand)
 	go func() {
 		defer close(done)
 		s.supervise(ctx)
 	}()
 	return nil
+}
+
+// Publish sends once on the current connected session. It never retries a command.
+// Do not call it from supervisor callbacks. Cancellation after delivery begins
+// cannot retract the write; a timeout must not be treated as proof of non-delivery.
+func (s *USBTelemetrySource) Publish(ctx context.Context, msg TMMsg) error {
+	if strings.IndexByte(msg.Topic, 0) >= 0 {
+		return errors.New("topic contains a null byte")
+	}
+	if _, err := msg.Value(); err != nil {
+		return err
+	}
+	msg.Payload = append([]byte(nil), msg.Payload...)
+	s.mu.Lock()
+	commands, done := s.commands, s.done
+	running := s.cancel != nil
+	s.mu.Unlock()
+	if !running {
+		return errors.New("USB telemetry is stopped")
+	}
+	command := usbSourceCommand{ctx: ctx, msg: msg, result: make(chan error, 1)}
+	select {
+	case commands <- command:
+	case <-done:
+		return errors.New("USB telemetry stopped")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-command.result:
+		return err
+	case <-done:
+		return errors.New("USB telemetry stopped")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type usbSourceCommand struct {
+	ctx    context.Context
+	msg    TMMsg
+	result chan error
 }
 
 func (s *USBTelemetrySource) Stop() error {
@@ -177,6 +221,7 @@ type usbSourceSession struct {
 	messages <-chan TMMsg
 	done     <-chan error
 	close    func()
+	publish  func(string, TMType, []byte) error
 }
 
 type usbSourceBackend struct {
@@ -266,6 +311,19 @@ func (s *USBTelemetrySource) supervise(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case command := <-s.commands:
+			err := command.ctx.Err()
+			if err == nil {
+				if m.state != "connected" || m.session == nil || m.session.publish == nil {
+					err = errors.New("USB telemetry is disconnected")
+				} else {
+					err = m.session.publish(command.msg.Topic, command.msg.Type, command.msg.Payload)
+					if err != nil {
+						m.disconnect(err)
+					}
+				}
+			}
+			command.result <- err
 		case _, ok := <-m.watchEvents:
 			if !ok {
 				m.watchFailed(errors.New("device watcher closed"))
