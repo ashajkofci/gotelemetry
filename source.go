@@ -46,8 +46,9 @@ type USBTelemetrySourceOptions struct {
 	Name                  string
 	VendorID              string
 	ProductID             string
-	SerialNumber          string // Optional selector when adapters share VID/PID.
-	Product               string // Optional USB product string selector; a trailing % matches a prefix.
+	SerialNumber          string   // Optional selector when adapters share VID/PID.
+	Product               string   // Optional USB product string selector; a trailing % matches a prefix.
+	Products              []string // Alternative product selectors; a nonempty list overrides Product.
 	Serial                SerialTransportOptions
 	ConnectionTimeout     time.Duration // Includes opening and identifying.
 	ReconnectInitialDelay time.Duration
@@ -83,6 +84,7 @@ type USBTelemetrySource struct {
 }
 
 func NewUSBTelemetrySource(options USBTelemetrySourceOptions) *USBTelemetrySource {
+	options.Products = append([]string(nil), options.Products...)
 	if options.Name == "" {
 		options.Name = "USB telemetry"
 	}
@@ -120,6 +122,11 @@ func (s *USBTelemetrySource) Start() error {
 	if s.options.Handshake != nil {
 		if _, err := s.options.Handshake.Value(); err != nil {
 			return err
+		}
+	}
+	for _, product := range s.options.Products {
+		if strings.TrimSpace(product) == "" {
+			return errors.New("USB product selectors must not be blank")
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -472,6 +479,18 @@ func matchesUSBProduct(product, selector string) bool {
 	return strings.EqualFold(product, selector)
 }
 
+func (options USBTelemetrySourceOptions) matchesProduct(product string) bool {
+	if len(options.Products) == 0 {
+		return matchesUSBProduct(product, options.Product)
+	}
+	for _, selector := range options.Products {
+		if strings.TrimSpace(selector) != "" && matchesUSBProduct(product, selector) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *usbSourceSupervisor) reconcile() {
 	if m.ctx.Err() != nil {
 		return
@@ -484,13 +503,13 @@ func (m *usbSourceSupervisor) reconcile() {
 		m.scheduleRetry()
 		return
 	}
-	serial, product := m.source.options.SerialNumber, m.source.options.Product
+	serial := m.source.options.SerialNumber
 	candidates := make([]USBDevice, 0, len(devices))
 	for _, device := range devices {
 		if serial != "" && device.SerialNumber != serial {
 			continue
 		}
-		if !matchesUSBProduct(device.Product, product) {
+		if !m.source.options.matchesProduct(device.Product) {
 			continue
 		}
 		candidates = append(candidates, device)

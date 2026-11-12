@@ -72,7 +72,11 @@ Callbacks are synchronous and should return promptly.
 Set `Product` to only open adapters whose USB product string descriptor
 matches (case-insensitive). A trailing `%` matches a product prefix, so
 `Accessory.%` accepts both `Accessory.02` and `Accessory.03`. Selectors without
-`%` continue to match exactly. Set `SerialNumber` to select a particular adapter.
+`%` continue to match exactly. Set `Products` to a list of alternative selectors
+to accept multiple products, for example `[]string{"Accessory.%", "Legacy.02"}`.
+A nonempty list overrides `Product`; any matching entry accepts the product.
+Blank list entries are rejected by `Start`. The list is copied at construction.
+Set `SerialNumber` to select a particular adapter.
 When several adapters still match, the most
 recently attached one is used. Port renumbering is handled on discovery.
 Timeouts and retry delays are configurable in `USBTelemetrySourceOptions`.

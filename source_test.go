@@ -478,7 +478,7 @@ func TestUSBSourceHandshakeRejectsWrongProjectAndTimesOut(t *testing.T) {
 
 func TestUSBSourceSelectsLatestDeviceAndHonorsSelectors(t *testing.T) {
 	older := usbSourceTestDevice
-	older.Product, older.Attached = "BAC.2360.02", time.Unix(100, 0)
+	older.Product, older.Attached = "Accessory.02", time.Unix(100, 0)
 	newer := older
 	newer.Name, newer.SerialNumber, newer.Path, newer.Attached = "/dev/ttyUSB2", "device-b", "/sys/devices/usb/2", time.Unix(200, 0)
 	t.Run("latest attached", func(t *testing.T) {
@@ -520,7 +520,7 @@ func TestUSBSourceSelectsLatestDeviceAndHonorsSelectors(t *testing.T) {
 		other := newer
 		other.Product = "FT230X Basic UART"
 		f := newUSBSourceFixture(t, older, other)
-		f.service.options.Product = " bac.2360.02"
+		f.service.options.Product = " accessory.02"
 		f.start(t)
 		if f.connect(t, 0).device != older {
 			t.Fatal("USB product selector ignored")
@@ -535,7 +535,7 @@ func TestUSBSourceSelectsLatestDeviceAndHonorsSelectors(t *testing.T) {
 		other := older
 		other.Product = ""
 		f := newUSBSourceFixture(t, other)
-		f.service.options.Product = "BAC.2360.02"
+		f.service.options.Product = "Accessory.02"
 		f.start(t)
 		usbSourceAwait(t, func() bool { return f.clock.activeTimers() == 0 })
 		f.mu.Lock()
@@ -581,6 +581,69 @@ func TestUSBProductMatching(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUSBProductAlternatives(t *testing.T) {
+	selectors := []string{"Accessory.%", "Legacy.02"}
+	source := NewUSBTelemetrySource(USBTelemetrySourceOptions{
+		VendorID: "1234", ProductID: "5678", Product: "Ignored", Products: selectors,
+	})
+	selectors[0] = "Changed"
+	for _, product := range []string{"Accessory.03", " legacy.02 "} {
+		if !source.options.matchesProduct(product) {
+			t.Fatalf("expected alternative %q to match", product)
+		}
+	}
+	for _, product := range []string{"", "Ignored", "Legacy.03", "Legacy.020", "Other"} {
+		if source.options.matchesProduct(product) {
+			t.Fatalf("unexpected match for %q", product)
+		}
+	}
+	for _, blank := range []string{"", " \n"} {
+		source.options.Products = []string{"Accessory.%", blank}
+		if err := source.Start(); err == nil {
+			source.Stop()
+			t.Fatal("blank selector accepted")
+		}
+	}
+	older := usbSourceTestDevice
+	older.Product = "Accessory.03"
+	newer := older
+	newer.Name, newer.SerialNumber, newer.Path = "another-port", "device-b", "another-path"
+	newer.Product, newer.Attached = "Legacy.02", time.Unix(200, 0)
+	t.Run("latest alternative and reconnect", func(t *testing.T) {
+		fixture := newUSBSourceFixture(t, older)
+		fixture.service.options.Products = []string{"Accessory.%", "Legacy.02"}
+		fixture.start(t)
+		fixture.connect(t, 0).finish(errors.New("read failure"))
+		usbSourceAwait(t, func() bool { return fixture.clock.hasTimer(time.Second) })
+		fixture.setDevices(older, newer)
+		fixture.notify()
+		if fixture.connect(t, 1).device != newer {
+			t.Fatal("latest alternative was not selected")
+		}
+	})
+	t.Run("serial remains required", func(t *testing.T) {
+		fixture := newUSBSourceFixture(t, older, newer)
+		fixture.service.options.Products = []string{"Accessory.%", "Legacy.02"}
+		fixture.service.options.SerialNumber = older.SerialNumber
+		fixture.start(t)
+		if fixture.connect(t, 0).device != older {
+			t.Fatal("serial constraint ignored")
+		}
+	})
+	t.Run("rejected devices are not opened", func(t *testing.T) {
+		newer.Product = "Legacy.020"
+		fixture := newUSBSourceFixture(t, newer)
+		fixture.service.options.Products = []string{"Accessory.%", "Legacy.02"}
+		fixture.start(t)
+		usbSourceAwait(t, func() bool { return fixture.clock.activeTimers() == 0 })
+		fixture.mu.Lock()
+		defer fixture.mu.Unlock()
+		if fixture.openCalls != 0 {
+			t.Fatal("rejected device was opened")
+		}
+	})
 }
 
 func TestUSBSourceWatcherFailureFallsBackAndRestoresEvents(t *testing.T) {
